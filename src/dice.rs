@@ -6,7 +6,10 @@ use std::{
 
 use rand::{Rng, RngCore};
 
-use crate::errors::DieError;
+use crate::{
+    errors::DieError,
+    pretty::{ColorSpec, PrettyFormat, WriteColor},
+};
 
 pub type Value = i16;
 
@@ -52,6 +55,16 @@ impl Roll {
             face,
             discarded: false,
         }
+    }
+}
+
+impl PrettyFormat for Roll {
+    fn pretty_format(&self, writer: &mut dyn WriteColor) -> Result<(), std::io::Error> {
+        if self.discarded {
+            writer.set_color(ColorSpec::new().set_dimmed(self.discarded))?;
+        }
+        write!(writer, "{}", self.face)?;
+        writer.reset()
     }
 }
 
@@ -116,15 +129,16 @@ impl Die for FateDie {
 #[cfg(test)]
 mod tests {
     use proptest::prelude::*;
-    use rand::rngs::mock::StepRng;
+    use rand::SeedableRng;
+    use rand_chacha::ChaCha8Rng;
 
     use super::*;
 
     prop_compose! {
         /// A deterministic random number generator, with a seed chosen by
         /// `proptest`.
-        fn rng()(seed in any::<u64>()) -> StepRng {
-            StepRng::new(seed, 17)
+        fn rng()(seed in any::<u64>()) -> ChaCha8Rng {
+            ChaCha8Rng::seed_from_u64(seed)
         }
 
     }

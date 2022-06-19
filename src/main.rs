@@ -3,6 +3,7 @@ use std::{io::Write, process::exit};
 use clap::Parser;
 use codespan_reporting::term::{termcolor::StandardStream, ColorArg};
 use log::debug;
+use pretty::PrettyFormat;
 use rand::prelude::ThreadRng;
 use spans::ProgramDiagnostics;
 
@@ -10,7 +11,10 @@ use crate::{program::Program, spans::FileName};
 
 mod dice;
 mod errors;
+#[cfg(test)]
+mod markdown_writer;
 mod output;
+mod pretty;
 mod program;
 mod spans;
 
@@ -50,7 +54,7 @@ fn run(args: &Args) -> Result<(), ProgramDiagnostics> {
         let program = Program::parse(file_name, dice_expr)?;
         let output = program.execute(&mut rng)?;
         output
-            .write(&mut writer)
+            .pretty_format(&mut writer)
             .map_err(ProgramDiagnostics::from_error)?;
         writer
             .write(b"\n")

@@ -121,6 +121,7 @@ dependencies = [
  "peg",
  "proptest",
  "rand",
+ "rand_chacha",
  "thiserror",
 ]
 

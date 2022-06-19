@@ -1,6 +1,6 @@
 //! Parsing and executing dice expressions.
 
-use std::rc::Rc;
+use std::{fmt, rc::Rc};
 
 use codespan_reporting::files::SimpleFiles;
 use rand::RngCore;
@@ -13,21 +13,44 @@ use crate::{
 };
 
 pub enum Expression {
-    Die(Rc<dyn Die>),
+    Dice { count: u64, die: Rc<dyn Die> },
 }
 
 impl Expression {
-    fn execute(&self, rng: &mut dyn RngCore) -> Result<Output, ProgramError> {
-        match self {
-            Expression::Die(die) => Ok(Output::Roll(die.clone().roll(rng))),
+    fn execute(self: &Rc<Expression>, rng: &mut dyn RngCore) -> Result<Output, ProgramError> {
+        match &**self {
+            Expression::Dice { count, die } => {
+                let mut rolls = vec![];
+                for _ in 0..*count {
+                    rolls.push(die.to_owned().roll(rng));
+                }
+                Ok(Output::Rolls {
+                    expression: self.to_owned(),
+                    rolls,
+                })
+            }
         }
+    }
+}
+
+impl fmt::Display for Expression {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Expression::Dice { count, die } => {
+                if *count != 1 {
+                    write!(f, "{}", count)?;
+                }
+                write!(f, "{}", die)?;
+            }
+        }
+        Ok(())
     }
 }
 
 /// A dice program, which can be executed to produce output.
 pub struct Program {
     files: Files,
-    expression: Expression,
+    expression: Rc<Expression>,
 }
 
 impl Program {
@@ -67,16 +90,54 @@ impl Program {
 
 peg::parser! {
     grammar program_parser() for str {
-        pub rule program() -> Expression = expression:expression();
+        pub rule program() -> Rc<Expression> = expression:expression();
 
-        rule expression() -> Expression = die:die() { Expression::Die(die) };
+        rule expression() -> Rc<Expression> = dice:dice()
+
+        rule dice() -> Rc<Expression>
+            = die:die() { Rc::new(Expression::Dice { count: 1, die }) }
+            / count:count() die:die() { Rc::new(Expression::Dice { count, die }) }
 
         rule die() -> Rc<dyn Die>
             = "dF" { FateDie::new() }
-            / "d" faces:number() {? SimpleDie::new(faces).map_err(|_| "the number of faces on a die must be greater than 0") }
+            / "d" faces:value() {? SimpleDie::new(faces).map_err(|_| "the number of faces on a die must be greater than 0") }
 
-        rule number() -> Value
+        rule value() -> Value
             = quiet! { n:$(['0'..='9']+) {? n.parse().or(Err(concat!("expected an integer no larger than ", stringify!(Value::MAX)))) } }
             / expected!("a number")
+
+        rule count() -> u64
+            = quiet! { n:$(['0'..='9']+) {? n.parse().or(Err(concat!("expected an integer no larger than ", stringify!(u64::MAX)))) } }
+            / expected!("a number")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rand::SeedableRng;
+    use rand_chacha::ChaCha8Rng;
+
+    use super::*;
+    use crate::{markdown_writer::MarkdownWriter, pretty::PrettyFormat};
+
+    #[test]
+    fn programs_print_expected_results() {
+        let examples = &[
+            ("d6", "d6 (5)"),
+            ("d12", "d12 (10)"),
+            ("d20", "d20 (19)"),
+            ("dF", "dF (+)"),
+            ("2d6", "2d6 (3 3)"),
+        ][..];
+
+        let mut rng = ChaCha8Rng::seed_from_u64(28);
+        for (idx, &(program, expected)) in examples.iter().enumerate() {
+            let file_name = FileName::Arg(idx + 1);
+            let program = Program::parse(file_name, program).unwrap();
+            let output = program.execute(&mut rng).unwrap();
+            let mut wtr = MarkdownWriter::new(vec![]);
+            output.pretty_format(&mut wtr).unwrap();
+            assert_eq!(wtr.into_string_lossy(), expected);
+        }
     }
 }

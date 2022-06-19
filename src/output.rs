@@ -4,21 +4,32 @@ use std::{io, rc::Rc};
 
 use codespan_reporting::term::termcolor::WriteColor;
 
-use crate::dice::Roll;
+use crate::{dice::Roll, pretty::PrettyFormat, program::Expression};
 
 // pub struct Rolls(Vec<Rc<Roll>>);
 
 pub enum Output {
-    Roll(Rc<Roll>),
+    Rolls {
+        expression: Rc<Expression>,
+        rolls: Vec<Rc<Roll>>,
+    },
     // Constant(Value),
-    // Rolls(Rolls),
     // Sum(Rc<Output>, Rc<Output>),
 }
 
-impl Output {
-    pub fn write(&self, writer: &mut dyn WriteColor) -> Result<(), io::Error> {
+impl PrettyFormat for Output {
+    fn pretty_format(&self, writer: &mut dyn WriteColor) -> Result<(), io::Error> {
         match self {
-            Output::Roll(roll) => write!(writer, "{}", roll.face)?,
+            Output::Rolls { expression, rolls } => {
+                write!(writer, "{} (", expression)?;
+                for (idx, roll) in rolls.iter().enumerate() {
+                    if idx > 0 {
+                        write!(writer, " ")?;
+                    }
+                    roll.pretty_format(writer)?;
+                }
+                write!(writer, ")")?;
+            }
         }
         Ok(())
     }
