@@ -1,25 +1,61 @@
-use std::rc::Rc;
+use std::{io::Write, process::exit};
 
-use anyhow::Result;
+use clap::Parser;
+use codespan_reporting::term::{termcolor::StandardStream, ColorArg};
+use log::debug;
 use rand::prelude::ThreadRng;
+use spans::ProgramDiagnostics;
 
-use crate::dice::{Die, FateDie, SimpleDie};
+use crate::{program::Program, spans::FileName};
 
 mod dice;
+mod errors;
+mod output;
+mod program;
+mod spans;
 
-fn main() -> Result<()> {
-    println!("Hello, world!");
+/// Roll dice!
+#[derive(Debug, Parser)]
+struct Args {
+    /// Configure coloring of output.
+    #[structopt(
+        long = "color",
+        default_value = "auto",
+        possible_values = ColorArg::VARIANTS,
+        case_insensitive = true,
+    )]
+    color: ColorArg,
 
-    let mut dice: Vec<Rc<dyn Die>> = vec![];
-    dice.push(SimpleDie::new(6)?);
-    dice.push(SimpleDie::new(20)?);
-    dice.push(FateDie::new());
+    /// Expressions of the form "2d6+3" or "d20".
+    dice_exprs: Vec<String>,
+}
 
-    let mut rng = ThreadRng::default();
-    for die in &dice {
-        let roll = die.clone().roll(&mut rng);
-        println!("{} roll: {}", die, roll.face);
+fn main() {
+    env_logger::init();
+    let args = Args::parse();
+    debug!("Args: {:?}", args);
+
+    if let Err(err) = run(&args) {
+        let mut writer = StandardStream::stdout(args.color.into());
+        err.write(&mut writer).expect("could not write error");
+        exit(1);
     }
+}
 
+fn run(args: &Args) -> Result<(), ProgramDiagnostics> {
+    let mut rng = ThreadRng::default();
+    let mut writer = StandardStream::stdout(args.color.into());
+    for (idx, dice_expr) in args.dice_exprs.iter().enumerate() {
+        let file_name = FileName::Arg(idx + 1);
+        let program = Program::parse(file_name, dice_expr)?;
+        let output = program.execute(&mut rng)?;
+        output
+            .write(&mut writer)
+            .map_err(ProgramDiagnostics::from_error)?;
+        writer
+            .write(b"\n")
+            .map_err(ProgramDiagnostics::from_error)?;
+    }
+    writer.flush().map_err(ProgramDiagnostics::from_error)?;
     Ok(())
 }

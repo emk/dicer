@@ -4,10 +4,11 @@ use std::{
     rc::Rc,
 };
 
-use anyhow::{anyhow, Result};
 use rand::{Rng, RngCore};
 
-type Value = i16;
+use crate::errors::DieError;
+
+pub type Value = i16;
 
 #[derive(Debug)]
 pub enum Face {
@@ -41,6 +42,17 @@ pub trait Die: Display + Debug {
 pub struct Roll {
     pub die: Rc<dyn Die>,
     pub face: Face,
+    pub discarded: bool,
+}
+
+impl Roll {
+    pub fn new(die: Rc<dyn Die>, face: Face) -> Roll {
+        Roll {
+            die,
+            face,
+            discarded: false,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -49,11 +61,11 @@ pub struct SimpleDie {
 }
 
 impl SimpleDie {
-    pub fn new(faces: Value) -> Result<Rc<SimpleDie>> {
+    pub fn new(faces: Value) -> Result<Rc<SimpleDie>, DieError> {
         if faces > 0 {
             Ok(Rc::new(SimpleDie { faces }))
         } else {
-            Err(anyhow!("die must have at least one face, found {}", faces))
+            Err(DieError::InvalidFaceCount { faces })
         }
     }
 }
@@ -67,10 +79,7 @@ impl Display for SimpleDie {
 impl Die for SimpleDie {
     fn roll(self: Rc<Self>, rng: &mut dyn RngCore) -> Rc<Roll> {
         let face = Face::Numeric(rng.gen_range(1..=self.faces));
-        Rc::new(Roll {
-            die: self.clone(),
-            face,
-        })
+        Rc::new(Roll::new(self.clone(), face))
     }
 }
 
@@ -100,10 +109,7 @@ impl Die for FateDie {
             "0"
         };
         let face = Face::NamedNumeric(Cow::Borrowed(label), value);
-        Rc::new(Roll {
-            die: self.clone(),
-            face,
-        })
+        Rc::new(Roll::new(self.clone(), face))
     }
 }
 
