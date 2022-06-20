@@ -2,9 +2,9 @@ use std::{io::Write, process::exit};
 
 use clap::Parser;
 use codespan_reporting::term::{termcolor::StandardStream, ColorArg};
+use errors::ProgramDiagnostics;
 use log::debug;
 use rand::prelude::ThreadRng;
-use spans::ProgramDiagnostics;
 
 use crate::{program::Program, spans::FileName};
 

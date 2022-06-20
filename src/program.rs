@@ -7,9 +7,9 @@ use rand::RngCore;
 
 use crate::{
     dice::{Die, FateDie, SimpleDie, Value},
-    errors::ProgramError,
+    errors::{ProgramDiagnostics, ProgramError},
     output::Output,
-    spans::{FileName, Files, ProgramDiagnostics, Span},
+    spans::{FileName, Files, Span},
 };
 
 pub enum Expression {

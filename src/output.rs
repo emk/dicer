@@ -3,20 +3,13 @@
 use std::{io, rc::Rc};
 
 use codespan_reporting::term::termcolor::WriteColor;
-use thiserror::Error;
 
 use crate::{
     dice::{Roll, Value},
+    errors::{OverflowErr, ProgramDiagnostics},
     pretty::PrettyFormat,
     program::Expression,
-    spans::ProgramDiagnostics,
 };
-
-/// Reported when an arithmetic overflow occurs. This should never happen in
-/// normal operation, so we don't bother to include any useful information.
-#[derive(Debug, Error)]
-#[error("arithmetic overflow")]
-pub struct OverflowErr;
 
 fn add_values(v1: Value, v2: Value) -> Result<Value, OverflowErr> {
     Ok(v1.checked_add(v2).ok_or(OverflowErr)?)
