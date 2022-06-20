@@ -14,6 +14,8 @@ use crate::{
 
 pub enum Expression {
     Dice { count: u64, die: Rc<dyn Die> },
+    Constant(Value),
+    Add(Rc<Expression>, Rc<Expression>),
 }
 
 impl Expression {
@@ -29,6 +31,12 @@ impl Expression {
                     rolls,
                 })
             }
+            Expression::Constant(value) => Ok(Output::Constant(*value)),
+            Expression::Add(e1, e2) => {
+                let o1 = e1.execute(rng)?;
+                let o2 = e2.execute(rng)?;
+                Ok(Output::Add(Rc::new(o1), Rc::new(o2)))
+            }
         }
     }
 }
@@ -41,6 +49,10 @@ impl fmt::Display for Expression {
                     write!(f, "{}", count)?;
                 }
                 write!(f, "{}", die)?;
+            }
+            Expression::Constant(value) => write!(f, "{}", value)?,
+            Expression::Add(e1, e2) => {
+                write!(f, "{} + {}", e1, e2)?;
             }
         }
         Ok(())
@@ -90,9 +102,14 @@ impl Program {
 
 peg::parser! {
     grammar program_parser() for str {
-        pub rule program() -> Rc<Expression> = expression:expression();
+        pub rule program() -> Rc<Expression> = expression:expression()
 
-        rule expression() -> Rc<Expression> = dice:dice()
+        rule expression() -> Rc<Expression> = precedence!{
+            e1:(@) "+" e2:@ { Rc::new(Expression::Add(e1, e2)) }
+            --
+            dice:dice() { dice }
+            value:value() { Rc::new(Expression::Constant(value)) }
+        }
 
         rule dice() -> Rc<Expression>
             = die:die() { Rc::new(Expression::Dice { count: 1, die }) }
@@ -118,16 +135,17 @@ mod tests {
     use rand_chacha::ChaCha8Rng;
 
     use super::*;
-    use crate::{markdown_writer::MarkdownWriter, pretty::PrettyFormat};
+    use crate::markdown_writer::MarkdownWriter;
 
     #[test]
     fn programs_print_expected_results() {
         let examples = &[
-            ("d6", "d6 (5)"),
-            ("d12", "d12 (10)"),
-            ("d20", "d20 (19)"),
-            ("dF", "dF (+)"),
-            ("2d6", "2d6 (3 3)"),
+            ("d6", "d6 (5) = 5"),
+            ("d12", "d12 (10) = 10"),
+            ("d20", "d20 (19) = 19"),
+            ("dF", "dF (+) = 1"),
+            ("2d6", "2d6 (3 3) = 6"),
+            ("2d6+3", "2d6 (4 6) + 3 = 13"),
         ][..];
 
         let mut rng = ChaCha8Rng::seed_from_u64(28);
@@ -136,7 +154,7 @@ mod tests {
             let program = Program::parse(file_name, program).unwrap();
             let output = program.execute(&mut rng).unwrap();
             let mut wtr = MarkdownWriter::new(vec![]);
-            output.pretty_format(&mut wtr).unwrap();
+            output.pretty_format_with_value(&mut wtr).unwrap();
             assert_eq!(wtr.into_string_lossy(), expected);
         }
     }
