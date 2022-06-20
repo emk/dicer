@@ -37,7 +37,7 @@ impl Display for Face {
     }
 }
 
-pub trait Die: Display + Debug {
+pub trait Die: Display + Debug + 'static {
     fn roll(self: Rc<Self>, rng: &mut dyn RngCore) -> Rc<Roll>;
 }
 
@@ -69,7 +69,9 @@ impl PrettyFormat for Roll {
 }
 
 #[derive(Debug)]
+#[cfg_attr(test, derive(proptest_derive::Arbitrary))]
 pub struct SimpleDie {
+    #[cfg_attr(test, proptest(strategy = "1..60i16"))]
     faces: Value,
 }
 
@@ -97,6 +99,7 @@ impl Die for SimpleDie {
 }
 
 #[derive(Debug)]
+#[cfg_attr(test, derive(proptest_derive::Arbitrary))]
 pub struct FateDie {}
 
 impl FateDie {
@@ -127,7 +130,7 @@ impl Die for FateDie {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use proptest::prelude::*;
     use rand::SeedableRng;
     use rand_chacha::ChaCha8Rng;
@@ -137,44 +140,30 @@ mod tests {
     prop_compose! {
         /// A deterministic random number generator, with a seed chosen by
         /// `proptest`.
-        fn rng()(seed in any::<u64>()) -> ChaCha8Rng {
+        pub fn rng()(seed in any::<u64>()) -> ChaCha8Rng {
             ChaCha8Rng::seed_from_u64(seed)
         }
 
     }
 
-    /// Generate a simple die in one of the usual sizes.
-    fn simple_die() -> impl Strategy<Value = Rc<SimpleDie>> {
+    pub fn any_die() -> impl proptest::prelude::Strategy<Value = Rc<dyn Die>> {
+        use proptest::prelude::*;
         prop_oneof![
-            Just(SimpleDie::new(2).unwrap()),
-            Just(SimpleDie::new(4).unwrap()),
-            Just(SimpleDie::new(6).unwrap()),
-            Just(SimpleDie::new(8).unwrap()),
-            Just(SimpleDie::new(10).unwrap()),
-            Just(SimpleDie::new(12).unwrap()),
-            Just(SimpleDie::new(20).unwrap()),
-            (1..60i16).prop_map(|faces| SimpleDie::new(faces).unwrap()),
-        ]
-    }
-
-    /// Generate die of a common sort.
-    fn die() -> impl Strategy<Value = Rc<dyn Die>> {
-        prop_oneof![
-            simple_die().prop_map(|d| d as Rc<dyn Die>),
+            any::<SimpleDie>().prop_map(|d| Rc::new(d) as Rc<dyn Die>),
             Just(FateDie::new() as Rc<dyn Die>),
         ]
     }
 
     proptest! {
         #[test]
-        fn dice_and_rolls_have_names(mut rng in rng(), die in die()) {
+        fn dice_and_rolls_have_names(mut rng in rng(), die in any_die()) {
             assert!(die.to_string().len() > 0);
             let roll = die.clone().roll(&mut rng);
             assert!(roll.face.to_string().len() > 0);
         }
 
         #[test]
-        fn simple_die_always_in_range(mut rng in rng(), die in simple_die()) {
+        fn simple_die_always_in_range(mut rng in rng(), die in any::<Rc<SimpleDie>>()) {
             let roll = die.clone().roll(&mut rng);
             let value = roll.face.value();
             assert!(1 <= value && value <= die.faces);

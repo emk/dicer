@@ -12,6 +12,7 @@ use crate::{
     spans::{FileName, Files, Span},
 };
 
+#[derive(Debug)]
 pub enum Expression {
     Dice { count: u64, die: Rc<dyn Die> },
     Constant(Value),
@@ -60,6 +61,7 @@ impl fmt::Display for Expression {
 }
 
 /// A dice program, which can be executed to produce output.
+#[derive(Debug)]
 pub struct Program {
     files: Files,
     expression: Rc<Expression>,
@@ -131,11 +133,33 @@ peg::parser! {
 
 #[cfg(test)]
 mod tests {
+    use proptest::prelude::*;
     use rand::SeedableRng;
     use rand_chacha::ChaCha8Rng;
 
     use super::*;
-    use crate::markdown_writer::MarkdownWriter;
+    use crate::{
+        dice::tests::{any_die, rng},
+        markdown_writer::MarkdownWriter,
+    };
+
+    impl Arbitrary for Expression {
+        type Parameters = ();
+
+        fn arbitrary_with(_: Self::Parameters) -> Self::Strategy {
+            let leaf = prop_oneof![
+                (-20..=20i16).prop_map(Expression::Constant),
+                ((0..6u64), any_die()).prop_map(|(count, die)| Expression::Dice { count, die }),
+            ];
+            leaf.prop_recursive(4, 32, 10, |inner| {
+                prop_oneof![(inner.clone(), inner)
+                    .prop_map(|(e1, e2)| Expression::Add(Rc::new(e1), Rc::new(e2))),]
+            })
+            .boxed()
+        }
+
+        type Strategy = BoxedStrategy<Expression>;
+    }
 
     #[test]
     fn programs_print_expected_results() {
@@ -156,6 +180,14 @@ mod tests {
             let mut wtr = MarkdownWriter::new(vec![]);
             output.pretty_format_with_value(&mut wtr).unwrap();
             assert_eq!(wtr.into_string_lossy(), expected);
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn expressions_can_be_evaluated(mut rng in rng(), expr in any::<Rc<Expression>>()) {
+            let output = expr.execute(&mut rng).unwrap();
+            let _ = output.value();
         }
     }
 }
