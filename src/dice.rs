@@ -20,10 +20,10 @@ pub enum Face {
 }
 
 impl Face {
-    pub fn value(&self) -> Option<Value> {
+    pub fn value(&self) -> Value {
         match self {
-            Face::Numeric(value) => Some(*value),
-            Face::NamedNumeric(_, value) => Some(*value),
+            Face::Numeric(value) => *value,
+            Face::NamedNumeric(_, value) => *value,
         }
     }
 }
@@ -176,7 +176,7 @@ mod tests {
         #[test]
         fn simple_die_always_in_range(mut rng in rng(), die in simple_die()) {
             let roll = die.clone().roll(&mut rng);
-            let value = roll.face.value().unwrap();
+            let value = roll.face.value();
             assert!(1 <= value && value <= die.faces);
             assert_eq!(roll.face.to_string(), value.to_string())
         }
@@ -185,7 +185,7 @@ mod tests {
         fn fate_die_has_value_in_expected_range(mut rng in rng()) {
             let die = FateDie::new();
             let roll = die.clone().roll(&mut rng);
-            let value = roll.face.value().unwrap();
+            let value = roll.face.value();
             let face_name = roll.face.to_string();
             match value {
                 -1 => assert_eq!(face_name, "-"),

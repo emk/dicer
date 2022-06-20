@@ -18,11 +18,8 @@ use crate::{
 #[error("arithmetic overflow")]
 pub struct OverflowErr;
 
-fn add_opt_values(v1: Option<Value>, v2: Option<Value>) -> Result<Option<Value>, OverflowErr> {
-    match (v1, v2) {
-        (None, _) | (_, None) => Ok(None),
-        (Some(v1), Some(v2)) => Ok(Some(v1.checked_add(v2).ok_or(OverflowErr)?)),
-    }
+fn add_values(v1: Value, v2: Value) -> Result<Value, OverflowErr> {
+    Ok(v1.checked_add(v2).ok_or(OverflowErr)?)
 }
 
 pub enum Output {
@@ -35,20 +32,20 @@ pub enum Output {
 }
 
 impl Output {
-    pub fn value(&self) -> Result<Option<Value>, OverflowErr> {
+    pub fn value(&self) -> Result<Value, OverflowErr> {
         match self {
             Output::Rolls { rolls, .. } => {
-                let mut sum = Some(0);
+                let mut sum = 0;
                 for roll in rolls {
-                    sum = add_opt_values(sum, roll.face.value())?;
+                    sum = add_values(sum, roll.face.value())?;
                 }
                 Ok(sum)
             }
-            Output::Constant(value) => Ok(Some(*value)),
+            Output::Constant(value) => Ok(*value),
             Output::Add(o1, o2) => {
                 let v1 = o1.value()?;
                 let v2 = o2.value()?;
-                add_opt_values(v1, v2)
+                add_values(v1, v2)
             }
         }
     }
@@ -59,9 +56,8 @@ impl Output {
     ) -> Result<(), ProgramDiagnostics> {
         self.pretty_format(writer)
             .map_err(ProgramDiagnostics::from_error)?;
-        if let Some(value) = self.value().map_err(ProgramDiagnostics::from_error)? {
-            write!(writer, " = {}", value).map_err(ProgramDiagnostics::from_error)?;
-        }
+        let value = self.value().map_err(ProgramDiagnostics::from_error)?;
+        write!(writer, " = {}", value).map_err(ProgramDiagnostics::from_error)?;
         Ok(())
     }
 }
