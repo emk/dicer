@@ -81,10 +81,12 @@ impl<D: fmt::Debug + PrettyFormat + 'static> PrettyFormat for Program<D> {
 
 peg::parser! {
     grammar program_parser() for str {
-        pub rule program() -> Rc<Expr<DiceExpr>> = expression:expression()
+        pub rule program() -> Rc<Expr<DiceExpr>> = _? expression:expression() _? {
+            expression
+        }
 
         rule expression() -> Rc<Expr<DiceExpr>> = precedence!{
-            e1:(@) "+" e2:@ { Rc::new(Expr::Binop(Binop::Add, e1, e2)) }
+            e1:(@) _? "+" _? e2:@ { Rc::new(Expr::Binop(Binop::Add, e1, e2)) }
             --
             dice:dice() { Rc::new(Expr::Dice(dice)) }
             value:value() { Rc::new(Expr::Constant(value)) }
@@ -105,6 +107,8 @@ peg::parser! {
         rule count() -> u64
             = quiet! { n:$(['0'..='9']+) {? n.parse().or(Err(concat!("expected an integer no larger than ", stringify!(u64::MAX)))) } }
             / expected!("a number")
+
+        rule _ = quiet!{[' ' | '\n' | '\t']+}
     }
 }
 
@@ -128,6 +132,7 @@ mod tests {
             ("2d6", "2d6 (3 3) = 6"),
             ("2d6+3", "2d6 (4 6) + 3 = 13"),
             ("4dF", "4dF (0 0 + +) = 2"),
+            (" 1d6 + 1 ", "d6 (1) + 1 = 2"),
         ][..];
 
         let mut rng = ChaCha8Rng::seed_from_u64(28);
