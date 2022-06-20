@@ -1,6 +1,6 @@
 //! Our basic error types.
 
-use std::{error, fmt, rc::Rc};
+use std::{error, fmt, io, rc::Rc};
 
 use codespan_reporting::{
     diagnostic::{self, Diagnostic, Label},
@@ -16,21 +16,15 @@ use thiserror::Error;
 
 use crate::{
     dice::Value,
+    expressions::Binop,
     spans::{FileId, Files, Span},
 };
 
-/// Reported when an arithmetic overflow occurs. This should never happen in
-/// normal operation, so we don't bother to include any useful information.
+/// An error occurred while doing math.
 #[derive(Debug, Error)]
-#[error("arithmetic overflow")]
-pub struct OverflowErr;
-
-/// Errors involving fundemantal dice operations. These errors do not include
-/// source code locations.
-#[derive(Debug, Error)]
-pub enum DieError {
-    #[error("a die must have at least one face, found: {faces}")]
-    InvalidFaceCount { faces: Value },
+pub enum MathError {
+    #[error("arithmetic overflow in {v1} {op} {v2}")]
+    Overflow { op: Binop, v1: Value, v2: Value },
 }
 
 /// An error occurred while parsing or executing a dice-related "program". This
@@ -38,8 +32,23 @@ pub enum DieError {
 /// user-friendly diagnostic.
 #[derive(Debug, Error)]
 pub enum ProgramError {
+    /// We found a die with the wrong number of faces.
+    #[error("a die must have at least one face, found: {faces}")]
+    InvalidFaceCount { faces: Value },
+
+    /// We had a problem doing I/O. We don't provide a lot of extra information,
+    /// because our language doesn't really do I/O. So this mostly applies to
+    /// `write!`.
+    #[error("I/O error: {0}")]
+    Io(#[from] io::Error),
+
+    /// An error occurred while performing basic math.
+    #[error("math error: {source}")]
+    Math { source: MathError },
+
+    /// We encountered an error parsing.
     #[error("{span}: {message}")]
-    ParseError { span: Span, message: String },
+    Parse { span: Span, message: String },
 }
 
 impl ProgramError {
@@ -47,7 +56,16 @@ impl ProgramError {
     pub fn to_diagnostic(&self) -> Diagnostic<FileId> {
         let mut diagnostic = Diagnostic::error();
         match self {
-            ProgramError::ParseError { span, message } => {
+            ProgramError::InvalidFaceCount { .. } => {
+                diagnostic = diagnostic.with_message(self.to_string());
+            }
+            ProgramError::Io(source) => {
+                diagnostic = diagnostic.with_message(source.to_string());
+            }
+            ProgramError::Math { source } => {
+                diagnostic = diagnostic.with_message(source.to_string());
+            }
+            ProgramError::Parse { span, message } => {
                 diagnostic = diagnostic
                     .with_message(message.to_owned())
                     .with_labels(vec![Label::new(

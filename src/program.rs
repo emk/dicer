@@ -1,6 +1,6 @@
 //! Parsing and executing dice expressions.
 
-use std::{fmt, rc::Rc};
+use std::{fmt, io, rc::Rc};
 
 use codespan_reporting::files::SimpleFiles;
 use rand::RngCore;
@@ -8,66 +8,18 @@ use rand::RngCore;
 use crate::{
     dice::{Die, FateDie, SimpleDie, Value},
     errors::{ProgramDiagnostics, ProgramError},
-    output::Output,
+    expressions::{Binop, DiceExpr, Evaluate, Expr, RollAll, RollsExpr},
+    pretty::{PrettyFormat, WriteColor},
     spans::{FileName, Files, Span},
 };
-
-#[derive(Debug)]
-pub enum Expression {
-    Dice { count: u64, die: Rc<dyn Die> },
-    Constant(Value),
-    Add(Rc<Expression>, Rc<Expression>),
-}
-
-impl Expression {
-    fn execute(self: &Rc<Expression>, rng: &mut dyn RngCore) -> Result<Output, ProgramError> {
-        match &**self {
-            Expression::Dice { count, die } => {
-                let mut rolls = vec![];
-                for _ in 0..*count {
-                    rolls.push(die.to_owned().roll(rng));
-                }
-                Ok(Output::Rolls {
-                    expression: self.to_owned(),
-                    rolls,
-                })
-            }
-            Expression::Constant(value) => Ok(Output::Constant(*value)),
-            Expression::Add(e1, e2) => {
-                let o1 = e1.execute(rng)?;
-                let o2 = e2.execute(rng)?;
-                Ok(Output::Add(Rc::new(o1), Rc::new(o2)))
-            }
-        }
-    }
-}
-
-impl fmt::Display for Expression {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Expression::Dice { count, die } => {
-                if *count != 1 {
-                    write!(f, "{}", count)?;
-                }
-                write!(f, "{}", die)?;
-            }
-            Expression::Constant(value) => write!(f, "{}", value)?,
-            Expression::Add(e1, e2) => {
-                write!(f, "{} + {}", e1, e2)?;
-            }
-        }
-        Ok(())
-    }
-}
-
 /// A dice program, which can be executed to produce output.
 #[derive(Debug)]
-pub struct Program {
+pub struct Program<D: fmt::Debug + 'static> {
     files: Files,
-    expression: Rc<Expression>,
+    expr: Rc<Expr<D>>,
 }
 
-impl Program {
+impl Program<DiceExpr> {
     /// Parse a string, returning a program.
     pub fn parse(file_name: FileName, dice_expr: &str) -> Result<Self, ProgramDiagnostics> {
         let mut files = SimpleFiles::new();
@@ -76,12 +28,12 @@ impl Program {
         let result = program_parser::program(dice_expr);
         let files = Rc::new(files);
         match result {
-            Ok(expression) => Ok(Program { files, expression }),
+            Ok(expr) => Ok(Program { files, expr }),
             Err(err) => {
                 let offset = err.location.offset;
                 Err(ProgramDiagnostics::from_program_error(
                     files.clone(),
-                    ProgramError::ParseError {
+                    ProgramError::Parse {
                         span: Span::new(file_id, offset..offset),
                         message: format!("expected {}", err.expected),
                     },
@@ -90,32 +42,57 @@ impl Program {
         }
     }
 
-    /// Execute this program.
-    pub(crate) fn execute(&self, rng: &mut dyn RngCore) -> Result<Output, ProgramDiagnostics> {
-        match self.expression.execute(rng) {
-            Ok(output) => Ok(output),
-            Err(err) => {
-                let files = self.files.clone();
-                Err(ProgramDiagnostics::from_program_error(files, err))
-            }
+    /// Roll all the dice specified by our program.
+    pub fn roll_all(&self, rng: &mut dyn RngCore) -> Program<RollsExpr> {
+        let expr = self.expr.clone().roll_all(rng);
+        Program::<RollsExpr> {
+            files: self.files.clone(),
+            expr: Rc::new(expr),
         }
+    }
+}
+
+impl Program<RollsExpr> {
+    /// Return the result of our program.
+    pub fn evaluate(&self) -> Result<Value, ProgramDiagnostics> {
+        self.expr
+            .evaluate()
+            .map_err(|err| ProgramDiagnostics::from_program_error(self.files.clone(), err))
+    }
+
+    /// The "evaluate" and "print" portions of a classic read-eval-print loop.
+    pub fn evaluate_and_pretty_format(
+        &self,
+        writer: &mut dyn WriteColor,
+    ) -> Result<(), ProgramDiagnostics> {
+        let value = self.evaluate()?;
+        self.pretty_format(writer)
+            .map_err(ProgramDiagnostics::from_error)?;
+        write!(writer, " = {value}").map_err(ProgramDiagnostics::from_error)?;
+        Ok(())
+    }
+}
+
+impl<D: fmt::Debug + PrettyFormat + 'static> PrettyFormat for Program<D> {
+    fn pretty_format(&self, writer: &mut dyn WriteColor) -> Result<(), io::Error> {
+        self.expr.pretty_format(writer)
     }
 }
 
 peg::parser! {
     grammar program_parser() for str {
-        pub rule program() -> Rc<Expression> = expression:expression()
+        pub rule program() -> Rc<Expr<DiceExpr>> = expression:expression()
 
-        rule expression() -> Rc<Expression> = precedence!{
-            e1:(@) "+" e2:@ { Rc::new(Expression::Add(e1, e2)) }
+        rule expression() -> Rc<Expr<DiceExpr>> = precedence!{
+            e1:(@) "+" e2:@ { Rc::new(Expr::Binop(Binop::Add, e1, e2)) }
             --
-            dice:dice() { dice }
-            value:value() { Rc::new(Expression::Constant(value)) }
+            dice:dice() { Rc::new(Expr::Dice(dice)) }
+            value:value() { Rc::new(Expr::Constant(value)) }
         }
 
-        rule dice() -> Rc<Expression>
-            = die:die() { Rc::new(Expression::Dice { count: 1, die }) }
-            / count:count() die:die() { Rc::new(Expression::Dice { count, die }) }
+        rule dice() -> Rc<DiceExpr>
+            = die:die() { Rc::new(DiceExpr::Dice { count: 1, die }) }
+            / count:count() die:die() { Rc::new(DiceExpr::Dice { count, die }) }
 
         rule die() -> Rc<dyn Die>
             = "dF" { FateDie::new() }
@@ -133,61 +110,34 @@ peg::parser! {
 
 #[cfg(test)]
 mod tests {
-    use proptest::prelude::*;
     use rand::SeedableRng;
     use rand_chacha::ChaCha8Rng;
 
     use super::*;
-    use crate::{
-        dice::tests::{any_die, rng},
-        markdown_writer::MarkdownWriter,
-    };
-
-    impl Arbitrary for Expression {
-        type Parameters = ();
-
-        fn arbitrary_with(_: Self::Parameters) -> Self::Strategy {
-            let leaf = prop_oneof![
-                (-20..=20i16).prop_map(Expression::Constant),
-                ((0..6u64), any_die()).prop_map(|(count, die)| Expression::Dice { count, die }),
-            ];
-            leaf.prop_recursive(4, 32, 10, |inner| {
-                prop_oneof![(inner.clone(), inner)
-                    .prop_map(|(e1, e2)| Expression::Add(Rc::new(e1), Rc::new(e2))),]
-            })
-            .boxed()
-        }
-
-        type Strategy = BoxedStrategy<Expression>;
-    }
+    use crate::markdown_writer::MarkdownWriter;
 
     #[test]
     fn programs_print_expected_results() {
         let examples = &[
+            // These tests can't be reordered without changing the rolls and
+            // sums, because they share a seeded RNG.
             ("d6", "d6 (5) = 5"),
             ("d12", "d12 (10) = 10"),
             ("d20", "d20 (19) = 19"),
             ("dF", "dF (+) = 1"),
             ("2d6", "2d6 (3 3) = 6"),
             ("2d6+3", "2d6 (4 6) + 3 = 13"),
+            ("4dF", "4dF (0 0 + +) = 2"),
         ][..];
 
         let mut rng = ChaCha8Rng::seed_from_u64(28);
         for (idx, &(program, expected)) in examples.iter().enumerate() {
             let file_name = FileName::Arg(idx + 1);
             let program = Program::parse(file_name, program).unwrap();
-            let output = program.execute(&mut rng).unwrap();
+            let rolled = program.roll_all(&mut rng);
             let mut wtr = MarkdownWriter::new(vec![]);
-            output.pretty_format_with_value(&mut wtr).unwrap();
+            rolled.evaluate_and_pretty_format(&mut wtr).unwrap();
             assert_eq!(wtr.into_string_lossy(), expected);
-        }
-    }
-
-    proptest! {
-        #[test]
-        fn expressions_can_be_evaluated(mut rng in rng(), expr in any::<Rc<Expression>>()) {
-            let output = expr.execute(&mut rng).unwrap();
-            let _ = output.value();
         }
     }
 }

@@ -10,9 +10,9 @@ use crate::{program::Program, spans::FileName};
 
 mod dice;
 mod errors;
+mod expressions;
 #[cfg(test)]
 mod markdown_writer;
-mod output;
 mod pretty;
 mod program;
 mod spans;
@@ -51,8 +51,8 @@ fn run(args: &Args) -> Result<(), ProgramDiagnostics> {
     for (idx, dice_expr) in args.dice_exprs.iter().enumerate() {
         let file_name = FileName::Arg(idx + 1);
         let program = Program::parse(file_name, dice_expr)?;
-        let output = program.execute(&mut rng)?;
-        output.pretty_format_with_value(&mut writer)?;
+        let rolled = program.roll_all(&mut rng);
+        rolled.evaluate_and_pretty_format(&mut writer)?;
         writer
             .write(b"\n")
             .map_err(ProgramDiagnostics::from_error)?;

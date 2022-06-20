@@ -7,7 +7,7 @@ use std::{
 use rand::{Rng, RngCore};
 
 use crate::{
-    errors::DieError,
+    errors::ProgramError,
     pretty::{ColorSpec, PrettyFormat, WriteColor},
 };
 
@@ -76,11 +76,11 @@ pub struct SimpleDie {
 }
 
 impl SimpleDie {
-    pub fn new(faces: Value) -> Result<Rc<SimpleDie>, DieError> {
+    pub fn new(faces: Value) -> Result<Rc<SimpleDie>, ProgramError> {
         if faces > 0 {
             Ok(Rc::new(SimpleDie { faces }))
         } else {
-            Err(DieError::InvalidFaceCount { faces })
+            Err(ProgramError::InvalidFaceCount { faces })
         }
     }
 }
