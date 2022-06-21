@@ -179,3 +179,13 @@ impl fmt::Display for ProgramDiagnostics {
 }
 
 impl error::Error for ProgramDiagnostics {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn convert_generic_error_to_program_diagnostics() {
+        ProgramDiagnostics::from_error(fmt::Error);
+    }
+}

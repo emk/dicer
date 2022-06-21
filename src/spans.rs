@@ -87,7 +87,9 @@ impl Files {
     /// Create a [`SimpleFiles`] with no source files in it. This is used when
     /// reporting errors that did not have an associated source location.
     pub fn empty() -> Files {
-        todo!()
+        Self {
+            files: Rc::new(SimpleFiles::new()),
+        }
     }
 }
 
