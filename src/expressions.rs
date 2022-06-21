@@ -3,7 +3,7 @@ use std::{fmt, io, rc::Rc};
 use rand::RngCore;
 
 use crate::{
-    dice::{Die, Roll, Value},
+    dice::{Die, Roll, RollDie, Value},
     errors::{MathError, ProgramError},
     pretty::{PrettyFormat, WriteColor},
 };
@@ -138,31 +138,11 @@ impl<D: fmt::Debug + Eq + PrettyFormat + 'static> PrettyFormat for Expr<D> {
 
 /// Expressions that include only dice, and operations performed on sets of
 /// rolls.
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub enum DiceExpr {
     /// XdY expressions.
-    Dice { count: u64, die: Rc<dyn Die> },
+    Dice { count: u64, die: Rc<Die> },
 }
-
-impl PartialEq for DiceExpr {
-    fn eq(&self, other: &Self) -> bool {
-        // We have to do this manually because `dyn Die` can't be compared.
-        match (self, other) {
-            (
-                Self::Dice {
-                    count: l_count,
-                    die: l_die,
-                },
-                Self::Dice {
-                    count: r_count,
-                    die: r_die,
-                },
-            ) => l_count == r_count && l_die.eq(&**r_die),
-        }
-    }
-}
-
-impl Eq for DiceExpr {}
 
 impl RollAll for DiceExpr {
     type Output = RollsExpr;
@@ -172,7 +152,7 @@ impl RollAll for DiceExpr {
             DiceExpr::Dice { count, die } => {
                 let mut rolls = vec![];
                 for _ in 0..*count {
-                    rolls.push(die.clone().roll(rng));
+                    rolls.push(die.roll_die(rng));
                 }
                 RollsExpr::Rolls { expr: self, rolls }
             }
@@ -251,7 +231,7 @@ mod tests {
     use proptest::prelude::*;
 
     use super::*;
-    use crate::dice::tests::{any_die, rng};
+    use crate::dice::tests::rng;
 
     impl<D: fmt::Debug + Eq + Arbitrary> Arbitrary for Expr<D> {
         type Parameters = ();
@@ -275,7 +255,7 @@ mod tests {
         type Parameters = ();
 
         fn arbitrary_with(_: Self::Parameters) -> Self::Strategy {
-            ((0..6u64), any_die())
+            ((0..6u64), any::<Rc<Die>>())
                 .prop_map(|(count, die)| DiceExpr::Dice { count, die })
                 .boxed()
         }

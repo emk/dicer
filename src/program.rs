@@ -99,9 +99,12 @@ peg::parser! {
             = die:die() { Rc::new(DiceExpr::Dice { count: 1, die }) }
             / count:count() die:die() { Rc::new(DiceExpr::Dice { count, die }) }
 
-        rule die() -> Rc<dyn Die>
-            = "dF" { FateDie::new() }
-            / "d" faces:value() {? SimpleDie::new(faces).map_err(|_| "the number of faces on a die must be greater than 0") }
+        rule die() -> Rc<Die>
+            = "dF" { Rc::new(Die::Fate(FateDie::new())) }
+            / "d" faces:value() {?
+                    Ok(Rc::new(Die::Simple(SimpleDie::new(faces)
+                        .map_err(|_| "the number of faces on a die must be greater than 0")?)))
+                }
 
         rule value() -> Value
             = quiet! { n:$("-"? ['0'..='9']+) {? n.parse().or(Err(concat!("expected an integer no larger than ", stringify!(Value::MAX)))) } }

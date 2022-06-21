@@ -1,5 +1,4 @@
 use std::{
-    any::Any,
     borrow::Cow,
     fmt::{self, Debug, Display},
     rc::Rc,
@@ -39,31 +38,49 @@ impl Display for Face {
 }
 
 /// Interface shared by all dice.
-///
-/// We implement this as a trait to allow arbitrary extension with new types of
-/// dice.
-pub trait Die: Display + Debug + 'static {
-    /// Return an implementation of Rust's [`Any`] interface, which can be use
-    /// to indentify the concrete type of a [`Die`] at runtime.
-    fn as_any(&self) -> &dyn Any;
-
-    /// Custom comparison function, allowing comparison of `dyn Die` values. For
-    /// background, see [this discussion](https://stackoverflow.com/a/25359060).
-    fn eq(&self, other: &dyn Die) -> bool;
-
+pub trait RollDie {
     /// Roll this die once.
-    fn roll(self: Rc<Self>, rng: &mut dyn RngCore) -> Rc<Roll>;
+    fn roll_die(self: &Rc<Self>, rng: &mut dyn RngCore) -> Rc<Roll>;
 }
 
-#[derive(Debug)]
+/// Any type of dice that we support.
+#[derive(Debug, Eq, PartialEq)]
+#[cfg_attr(test, derive(proptest_derive::Arbitrary))]
+#[non_exhaustive]
+pub enum Die {
+    /// Dice with numbered faces.
+    Simple(Rc<SimpleDie>),
+    /// Dice with "-", "0" and "+" faces.
+    Fate(Rc<FateDie>),
+}
+
+impl fmt::Display for Die {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Die::Simple(die) => <SimpleDie as fmt::Display>::fmt(die, f),
+            Die::Fate(die) => <FateDie as fmt::Display>::fmt(die, f),
+        }
+    }
+}
+
+impl RollDie for Die {
+    fn roll_die(self: &Rc<Self>, rng: &mut dyn RngCore) -> Rc<Roll> {
+        match &**self {
+            Die::Simple(die) => die.roll_die(rng),
+            Die::Fate(die) => die.roll_die(rng),
+        }
+    }
+}
+
+#[derive(Debug, Eq, PartialEq)]
 pub struct Roll {
-    pub die: Rc<dyn Die>,
+    pub die: Rc<Die>,
     pub face: Face,
     pub discarded: bool,
 }
 
 impl Roll {
-    pub fn new(die: Rc<dyn Die>, face: Face) -> Roll {
+    pub fn new(die: Rc<Die>, face: Face) -> Roll {
         Roll {
             die,
             face,
@@ -71,14 +88,6 @@ impl Roll {
         }
     }
 }
-
-impl PartialEq for Roll {
-    fn eq(&self, other: &Self) -> bool {
-        self.die.eq(&*other.die) && self.face == other.face && self.discarded == other.discarded
-    }
-}
-
-impl Eq for Roll {}
 
 impl PrettyFormat for Roll {
     fn pretty_format(&self, writer: &mut dyn WriteColor) -> Result<(), std::io::Error> {
@@ -113,22 +122,10 @@ impl Display for SimpleDie {
     }
 }
 
-impl Die for SimpleDie {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn eq(&self, other: &dyn Die) -> bool {
-        if let Some(other) = other.as_any().downcast_ref::<Self>() {
-            self == other
-        } else {
-            false
-        }
-    }
-
-    fn roll(self: Rc<Self>, rng: &mut dyn RngCore) -> Rc<Roll> {
+impl RollDie for SimpleDie {
+    fn roll_die(self: &Rc<Self>, rng: &mut dyn RngCore) -> Rc<Roll> {
         let face = Face::Numeric(rng.gen_range(1..=self.faces));
-        Rc::new(Roll::new(self.clone(), face))
+        Rc::new(Roll::new(Rc::new(Die::Simple(self.clone())), face))
     }
 }
 
@@ -148,20 +145,8 @@ impl Display for FateDie {
     }
 }
 
-impl Die for FateDie {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn eq(&self, other: &dyn Die) -> bool {
-        if let Some(other) = other.as_any().downcast_ref::<Self>() {
-            self == other
-        } else {
-            false
-        }
-    }
-
-    fn roll(self: Rc<Self>, rng: &mut dyn RngCore) -> Rc<Roll> {
+impl RollDie for FateDie {
+    fn roll_die(self: &Rc<Self>, rng: &mut dyn RngCore) -> Rc<Roll> {
         let value = rng.gen_range(-1..=1);
         let label = if value < 0 {
             "-"
@@ -171,7 +156,7 @@ impl Die for FateDie {
             "0"
         };
         let face = Face::NamedNumeric(Cow::Borrowed(label), value);
-        Rc::new(Roll::new(self.clone(), face))
+        Rc::new(Roll::new(Rc::new(Die::Fate(self.clone())), face))
     }
 }
 
@@ -192,25 +177,17 @@ pub mod tests {
 
     }
 
-    pub fn any_die() -> impl proptest::prelude::Strategy<Value = Rc<dyn Die>> {
-        use proptest::prelude::*;
-        prop_oneof![
-            any::<SimpleDie>().prop_map(|d| Rc::new(d) as Rc<dyn Die>),
-            Just(FateDie::new() as Rc<dyn Die>),
-        ]
-    }
-
     proptest! {
         #[test]
-        fn dice_and_rolls_have_names(mut rng in rng(), die in any_die()) {
+        fn dice_and_rolls_have_names(mut rng in rng(), die in any::<Rc<Die>>()) {
             assert!(die.to_string().len() > 0);
-            let roll = die.clone().roll(&mut rng);
+            let roll = die.roll_die(&mut rng);
             assert!(roll.face.to_string().len() > 0);
         }
 
         #[test]
         fn simple_die_always_in_range(mut rng in rng(), die in any::<Rc<SimpleDie>>()) {
-            let roll = die.clone().roll(&mut rng);
+            let roll = die.roll_die(&mut rng);
             let value = roll.face.value();
             assert!(1 <= value && value <= die.faces);
             assert_eq!(roll.face.to_string(), value.to_string())
@@ -219,7 +196,7 @@ pub mod tests {
         #[test]
         fn fate_die_has_value_in_expected_range(mut rng in rng()) {
             let die = FateDie::new();
-            let roll = die.clone().roll(&mut rng);
+            let roll = die.roll_die(&mut rng);
             let value = roll.face.value();
             let face_name = roll.face.to_string();
             match value {
