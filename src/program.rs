@@ -24,11 +24,11 @@ pub struct Program<D: fmt::Debug + Eq + 'static> {
 
 impl Program<DiceExpr> {
     /// Parse a string, returning a program.
-    pub fn parse(file_name: FileName, dice_expr: &str) -> Result<Self, ProgramDiagnostics> {
+    pub fn parse(file_name: FileName, source: &str) -> Result<Self, ProgramDiagnostics> {
         let mut files = SimpleFiles::new();
-        let file_id = files.add(file_name, dice_expr.to_owned());
+        let file_id = files.add(file_name, source.to_owned());
 
-        let result = program_parser::program(dice_expr, file_id);
+        let result = program_parser::program(source, file_id);
         let files = Files::new(files);
         match result {
             Ok(expr) => Ok(Program { files, expr }),
@@ -170,13 +170,26 @@ mod tests {
         ][..];
 
         let mut rng = ChaCha8Rng::seed_from_u64(28);
-        for (idx, &(program, expected)) in examples.iter().enumerate() {
-            let file_name = FileName::Arg(idx + 1);
-            let program = Program::parse(file_name, program).unwrap();
+        for &(source, expected) in examples {
+            let program = Program::parse(FileName::Test, source).unwrap();
             let rolled = program.roll_all(&mut rng);
             let mut wtr = MarkdownWriter::new(vec![]);
             rolled.evaluate_and_pretty_format(&mut wtr).unwrap();
             assert_eq!(wtr.into_string_lossy(), expected);
+        }
+    }
+
+    #[test]
+    fn errors_are_reported() {
+        let examples = vec![format!("{max} + {max}", max = Value::MAX)];
+
+        let mut rng = ChaCha8Rng::seed_from_u64(28);
+        for source in examples {
+            let program = Program::parse(FileName::Test, &source).unwrap();
+            let rolled = program.roll_all(&mut rng);
+            let mut wtr = MarkdownWriter::new(vec![]);
+            let result = rolled.evaluate_and_pretty_format(&mut wtr);
+            assert!(result.is_err());
         }
     }
 
@@ -189,7 +202,7 @@ mod tests {
             let mut wtr = MarkdownWriter::new(vec![]);
             expr.pretty_format(&mut wtr).unwrap();
             let src = wtr.into_string_lossy();
-            let parsed = Program::parse(FileName::Arg(1), &src).unwrap();
+            let parsed = Program::parse(FileName::Test, &src).unwrap();
             assert_eq!(parsed.expr, expr);
         }
     }
