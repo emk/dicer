@@ -1,10 +1,10 @@
 //! Our basic error types.
 
-use std::{error, fmt, io, rc::Rc};
+use std::{error, fmt, io};
 
 use codespan_reporting::{
     diagnostic::{self, Diagnostic, Label},
-    files::{Error as CodeSpanError, SimpleFiles},
+    files::Error as CodeSpanError,
     term::{
         self,
         termcolor::{NoColor, WriteColor},
@@ -56,6 +56,8 @@ pub enum ProgramError {
     /// An error occurred while performing basic math.
     #[error("math error: {source}")]
     Math {
+        /// The source location where the error occurred.
+        span: Span,
         /// Our wrapped [`MathError`].
         source: MathError,
     },
@@ -81,8 +83,14 @@ impl ProgramError {
             ProgramError::Io(source) => {
                 diagnostic = diagnostic.with_message(source.to_string());
             }
-            ProgramError::Math { source } => {
-                diagnostic = diagnostic.with_message(source.to_string());
+            ProgramError::Math { span, source } => {
+                diagnostic = diagnostic
+                    .with_message(source.to_string())
+                    .with_labels(vec![Label::new(
+                        diagnostic::LabelStyle::Primary,
+                        span.file_id,
+                        span.range.clone(),
+                    )]);
             }
             ProgramError::Parse { span, message } => {
                 diagnostic = diagnostic
@@ -133,7 +141,7 @@ impl ProgramDiagnostics {
     /// Convert a single, normal error into a diagnostic report.
     pub fn from_error<E: error::Error>(err: E) -> Self {
         Self {
-            files: Rc::new(SimpleFiles::new()),
+            files: Files::empty(),
             diagnostics: vec![diagnostic_from_error(err)],
         }
     }
@@ -142,7 +150,7 @@ impl ProgramDiagnostics {
     pub fn write(&self, writer: &mut dyn WriteColor) -> Result<(), CodeSpanError> {
         let config = Config::default();
         for diagnostic in &self.diagnostics {
-            term::emit(writer, &config, &*self.files, diagnostic)?;
+            term::emit(writer, &config, &self.files, diagnostic)?;
         }
         Ok(())
     }

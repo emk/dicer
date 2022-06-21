@@ -8,6 +8,7 @@ use crate::{
     dice::{Die, Roll, RollDie, Value},
     errors::{MathError, ProgramError},
     pretty::{PrettyFormat, WriteColor},
+    spans::Span,
 };
 
 /// Interface to a type that contains one or more [`Die`] values that can be
@@ -68,21 +69,46 @@ impl fmt::Display for Binop {
 ///
 /// - [`Expr<DiceExpr>`]: Parsed source code.
 /// - [`Expr<RollsExpr>`]: Paresed source code with die rolls attached.
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub enum Expr<D: fmt::Debug + Eq + 'static> {
     /// An expression involving dice. The contents vary depending on whether the
     /// dice have been rolled.
-    Dice(Rc<D>),
+    Dice(Span, Rc<D>),
     /// A simple constant numeric value.
-    Constant(Value),
+    Constant(Span, Value),
     /// A binary operator.
-    Binop(Binop, Rc<Self>, Rc<Self>),
+    Binop(Span, Binop, Rc<Self>, Rc<Self>),
+}
+
+impl<D: fmt::Debug + Eq + 'static> Expr<D> {
+    /// The source code span for this expression.
+    pub fn span(&self) -> &Span {
+        match self {
+            Expr::Dice(span, _) => span,
+            Expr::Constant(span, _) => span,
+            Expr::Binop(span, _, _, _) => span,
+        }
+    }
+
+    /// The span containing this expression and `other`.
+    ///
+    /// The two spans must be in same file. This is intended for use by the
+    /// parser.
+    pub(crate) fn combined_span_for_parser(&self, other: &Expr<D>) -> Span {
+        let (s1, s2) = (self.span(), other.span());
+        debug_assert_eq!(s1.file_id, s2.file_id);
+        debug_assert!(s1.range.end <= s2.range.start);
+        Span {
+            file_id: s1.file_id,
+            range: s1.range.start..s2.range.end,
+        }
+    }
 }
 
 impl<D: fmt::Debug + Eq + 'static> Expr<D> {
     /// Is this a binop? Used for inserting parens when printing.
     fn is_binop(&self) -> bool {
-        matches!(self, Expr::Binop(_, _, _))
+        matches!(self, Expr::Binop(_, _, _, _))
     }
 }
 
@@ -91,12 +117,14 @@ impl RollAll for Expr<DiceExpr> {
 
     fn roll_all(self: Rc<Self>, rng: &mut dyn RngCore) -> Self::Output {
         match &*self {
-            Expr::Dice(dice_expr) => Expr::Dice(Rc::new(dice_expr.to_owned().roll_all(rng))),
-            Expr::Constant(n) => Expr::Constant(*n),
-            Expr::Binop(op, e1, e2) => {
+            Expr::Dice(span, dice_expr) => {
+                Expr::Dice(span.to_owned(), Rc::new(dice_expr.to_owned().roll_all(rng)))
+            }
+            Expr::Constant(span, n) => Expr::Constant(span.to_owned(), *n),
+            Expr::Binop(span, op, e1, e2) => {
                 let r1 = e1.to_owned().roll_all(rng);
                 let r2 = e2.to_owned().roll_all(rng);
-                Expr::Binop(*op, Rc::new(r1), Rc::new(r2))
+                Expr::Binop(span.to_owned(), *op, Rc::new(r1), Rc::new(r2))
             }
         }
     }
@@ -107,13 +135,15 @@ impl Evaluate for Expr<RollsExpr> {
 
     fn evaluate(&self) -> Result<Self::Output, ProgramError> {
         match self {
-            Expr::Dice(rolls) => rolls.evaluate(),
-            Expr::Constant(n) => Ok(*n),
-            Expr::Binop(op, e1, e2) => {
+            Expr::Dice(_, rolls) => rolls.evaluate(),
+            Expr::Constant(_, n) => Ok(*n),
+            Expr::Binop(span, op, e1, e2) => {
                 let v1 = e1.evaluate()?;
                 let v2 = e2.evaluate()?;
-                op.apply(v1, v2)
-                    .map_err(|source| ProgramError::Math { source })
+                op.apply(v1, v2).map_err(|source| ProgramError::Math {
+                    span: span.to_owned(),
+                    source,
+                })
             }
         }
     }
@@ -122,17 +152,17 @@ impl Evaluate for Expr<RollsExpr> {
 impl<D: fmt::Debug + Eq + PrettyFormat + 'static> PrettyFormat for Expr<D> {
     fn pretty_format(&self, writer: &mut dyn WriteColor) -> Result<(), io::Error> {
         match self {
-            Expr::Dice(d) => d.pretty_format(writer),
-            Expr::Constant(n) => write!(writer, "{n}"),
+            Expr::Dice(_, d) => d.pretty_format(writer),
+            Expr::Constant(_, n) => write!(writer, "{n}"),
             // Handle parentheses insertion. This code is expected to evolve
             // rapidly if we add more operators.
-            Expr::Binop(op, e1, e2) if e2.is_binop() => {
+            Expr::Binop(_, op, e1, e2) if e2.is_binop() => {
                 e1.pretty_format(writer)?;
                 write!(writer, " {} (", op)?;
                 e2.pretty_format(writer)?;
                 write!(writer, ")")
             }
-            Expr::Binop(op, e1, e2) => {
+            Expr::Binop(_, op, e1, e2) => {
                 e1.pretty_format(writer)?;
                 write!(writer, " {} ", op)?;
                 e2.pretty_format(writer)
@@ -147,6 +177,8 @@ impl<D: fmt::Debug + Eq + PrettyFormat + 'static> PrettyFormat for Expr<D> {
 pub enum DiceExpr {
     /// XdY expressions.
     Dice {
+        /// The source location of this [`DiceExpr`].
+        span: Span,
         /// The number of dice to roll.
         count: u64,
         /// The type of dice to roll.
@@ -154,12 +186,21 @@ pub enum DiceExpr {
     },
 }
 
+impl DiceExpr {
+    /// The source location of this [`DiceExpr`].
+    pub fn span(&self) -> &Span {
+        match self {
+            DiceExpr::Dice { span, .. } => span,
+        }
+    }
+}
+
 impl RollAll for DiceExpr {
     type Output = RollsExpr;
 
     fn roll_all(self: Rc<Self>, rng: &mut dyn RngCore) -> Self::Output {
         match &*self {
-            DiceExpr::Dice { count, die } => {
+            DiceExpr::Dice { count, die, .. } => {
                 let mut rolls = vec![];
                 for _ in 0..*count {
                     rolls.push(die.roll_die(rng));
@@ -173,7 +214,7 @@ impl RollAll for DiceExpr {
 impl PrettyFormat for DiceExpr {
     fn pretty_format(&self, writer: &mut dyn WriteColor) -> Result<(), io::Error> {
         match self {
-            DiceExpr::Dice { count, die } => {
+            DiceExpr::Dice { count, die, .. } => {
                 if *count != 1 {
                     write!(writer, "{count}")?;
                 }
@@ -200,11 +241,12 @@ impl Evaluate for RollsExpr {
 
     fn evaluate(&self) -> Result<Self::Output, ProgramError> {
         match self {
-            RollsExpr::Rolls { rolls, .. } => {
+            RollsExpr::Rolls { expr, rolls, .. } => {
                 let mut sum: Value = 0;
                 for roll in rolls {
                     let value = roll.face.value();
                     sum = sum.checked_add(value).ok_or(ProgramError::Math {
+                        span: expr.span().to_owned(),
                         source: MathError::Overflow {
                             op: Binop::Add,
                             v1: sum,
@@ -248,12 +290,15 @@ mod tests {
 
         fn arbitrary_with(_: Self::Parameters) -> Self::Strategy {
             let leaf = prop_oneof![
-                (-20..=20i16).prop_map(Self::Constant),
-                any::<D>().prop_map(|d| Self::Dice(Rc::new(d))),
+                (any::<Span>(), -20..=20i16).prop_map(|(s, c)| Self::Constant(s, c)),
+                (any::<Span>(), any::<D>()).prop_map(|(s, d)| Self::Dice(s, Rc::new(d))),
             ];
             leaf.prop_recursive(4, 32, 10, |inner| {
-                prop_oneof![(any::<Binop>(), inner.clone(), inner)
-                    .prop_map(|(binop, e1, e2)| Self::Binop(binop, Rc::new(e1), Rc::new(e2))),]
+                prop_oneof![
+                    (any::<Span>(), any::<Binop>(), inner.clone(), inner).prop_map(
+                        |(span, binop, e1, e2)| Self::Binop(span, binop, Rc::new(e1), Rc::new(e2))
+                    ),
+                ]
             })
             .boxed()
         }
@@ -265,8 +310,8 @@ mod tests {
         type Parameters = ();
 
         fn arbitrary_with(_: Self::Parameters) -> Self::Strategy {
-            ((0..6u64), any::<Rc<Die>>())
-                .prop_map(|(count, die)| DiceExpr::Dice { count, die })
+            (any::<Span>(), (0..6u64), any::<Rc<Die>>())
+                .prop_map(|(span, count, die)| DiceExpr::Dice { span, count, die })
                 .boxed()
         }
 

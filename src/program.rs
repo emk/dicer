@@ -10,7 +10,7 @@ use crate::{
     errors::{ProgramDiagnostics, ProgramError},
     expressions::{Binop, DiceExpr, Evaluate, Expr, RollAll, RollsExpr},
     pretty::{PrettyFormat, WriteColor},
-    spans::{FileName, Files, Span},
+    spans::{FileId, FileName, Files, Span},
 };
 
 /// A dice program, which can be executed to produce output.
@@ -28,8 +28,8 @@ impl Program<DiceExpr> {
         let mut files = SimpleFiles::new();
         let file_id = files.add(file_name, dice_expr.to_owned());
 
-        let result = program_parser::program(dice_expr);
-        let files = Rc::new(files);
+        let result = program_parser::program(dice_expr, file_id);
+        let files = Files::new(files);
         match result {
             Ok(expr) => Ok(Program { files, expr }),
             Err(err) => {
@@ -84,22 +84,43 @@ impl<D: fmt::Debug + Eq + PrettyFormat + 'static> PrettyFormat for Program<D> {
 
 peg::parser! {
     grammar program_parser() for str {
-        pub rule program() -> Rc<Expr<DiceExpr>> = _? expression:expression() _? {
+        pub rule program(file_id: FileId) -> Rc<Expr<DiceExpr>> = _? expression:expression(file_id) _? {
             expression
         }
 
-        rule expression() -> Rc<Expr<DiceExpr>> = precedence!{
-            e1:(@) _? "+" _? e2:@ { Rc::new(Expr::Binop(Binop::Add, e1, e2)) }
-            e1:(@) _? "-" _? e2:@ { Rc::new(Expr::Binop(Binop::Sub, e1, e2)) }
+        rule expression(file_id: FileId) -> Rc<Expr<DiceExpr>> = precedence!{
+            // We cannot use `position!` here at all, so we need to get tricky.
+            e1:(@) _? "+" _? e2:@ {
+                Rc::new(Expr::Binop(e1.combined_span_for_parser(&e2), Binop::Add, e1, e2))
+            }
+            e1:(@) _? "-" _? e2:@ {
+                Rc::new(Expr::Binop(e1.combined_span_for_parser(&e2), Binop::Sub, e1, e2))
+            }
             --
-            "(" _? e:expression() _? ")" { e }
-            dice:dice() { Rc::new(Expr::Dice(dice)) }
-            value:value() { Rc::new(Expr::Constant(value)) }
+            "(" _? e:expression(file_id) _? ")" { e }
+            span_and_dice:spanned(file_id, <dice(file_id)>) {
+                let (span, dice) = span_and_dice;
+                Rc::new(Expr::Dice(span, dice))
+            }
+            span_and_value:spanned(file_id, <value()>) {
+                let (span, value) = span_and_value;
+                Rc::new(Expr::Constant(span, value))
+            }
         }
 
-        rule dice() -> Rc<DiceExpr>
-            = die:die() { Rc::new(DiceExpr::Dice { count: 1, die }) }
-            / count:count() die:die() { Rc::new(DiceExpr::Dice { count, die }) }
+        /// Helper rule for `expression`, which can't use `position!` normally.
+        rule spanned<T>(file_id: FileId, expr: rule<T>) -> (Span, T)
+            = l:position!() e:expr() r:position!() { (Span { file_id, range: l..r }, e) }
+
+        rule dice(file_id: FileId) -> Rc<DiceExpr>
+            = l:position!() die:die() r:position!() {
+                let span = Span { file_id, range: l..r };
+                Rc::new(DiceExpr::Dice { span, count: 1, die })
+            }
+            / l:position!() count:count() die:die() r:position!() {
+                let span = Span { file_id, range: l..r };
+                Rc::new(DiceExpr::Dice { span, count, die })
+            }
 
         rule die() -> Rc<Die>
             = "dF" { Rc::new(Die::Fate(FateDie::new())) }
