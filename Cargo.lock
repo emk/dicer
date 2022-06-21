@@ -130,11 +130,13 @@ dependencies = [
  "env_logger",
  "internment",
  "log",
+ "once_cell",
  "peg",
  "proptest",
  "proptest-derive",
  "rand",
  "rand_chacha",
+ "regex",
  "thiserror",
 ]
 

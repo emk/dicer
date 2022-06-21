@@ -5,10 +5,12 @@ use std::{fmt, io, rc::Rc};
 use rand::RngCore;
 
 use crate::{
-    dice::{Die, Roll, RollDie, Value},
+    annotations::Annotations,
+    dice::{Die, Roll, RollDie},
     errors::{MathError, ProgramError},
     pretty::{PrettyFormat, WriteColor},
     spans::Span,
+    values::{Number, Values},
 };
 
 /// Interface to a type that contains one or more [`Die`] values that can be
@@ -42,14 +44,14 @@ pub enum Binop {
 
 impl Binop {
     /// Apply this binary operator to two values.
-    pub fn apply(self, v1: Value, v2: Value) -> Result<Value, MathError> {
+    pub fn apply(self, n1: Number, n2: Number) -> Result<Number, MathError> {
         match self {
-            Binop::Add => v1
-                .checked_add(v2)
-                .ok_or(MathError::Overflow { op: self, v1, v2 }),
-            Binop::Sub => v1
-                .checked_sub(v2)
-                .ok_or(MathError::Overflow { op: self, v1, v2 }),
+            Binop::Add => n1
+                .checked_add(n2)
+                .ok_or(MathError::Overflow { op: self, n1, n2 }),
+            Binop::Sub => n1
+                .checked_sub(n2)
+                .ok_or(MathError::Overflow { op: self, n1, n2 }),
         }
     }
 }
@@ -75,7 +77,9 @@ pub enum Expr<D: fmt::Debug + Eq + 'static> {
     /// dice have been rolled.
     Dice(Span, Rc<D>),
     /// A simple constant numeric value.
-    Constant(Span, Value),
+    Constant(Span, Number),
+    /// Annotations used to label values.
+    Annotations(Span, Rc<Self>, Annotations),
     /// A binary operator.
     Binop(Span, Binop, Rc<Self>, Rc<Self>),
 }
@@ -86,6 +90,7 @@ impl<D: fmt::Debug + Eq + 'static> Expr<D> {
         match self {
             Expr::Dice(span, _) => span,
             Expr::Constant(span, _) => span,
+            Expr::Annotations(span, _, _) => span,
             Expr::Binop(span, _, _, _) => span,
         }
     }
@@ -121,6 +126,10 @@ impl RollAll for Expr<DiceExpr> {
                 Expr::Dice(span.to_owned(), Rc::new(dice_expr.to_owned().roll_all(rng)))
             }
             Expr::Constant(span, n) => Expr::Constant(span.to_owned(), *n),
+            Expr::Annotations(span, e, annotations) => {
+                let r = e.to_owned().roll_all(rng);
+                Expr::Annotations(span.clone(), Rc::new(r), annotations.clone())
+            }
             Expr::Binop(span, op, e1, e2) => {
                 let r1 = e1.to_owned().roll_all(rng);
                 let r2 = e2.to_owned().roll_all(rng);
@@ -131,19 +140,22 @@ impl RollAll for Expr<DiceExpr> {
 }
 
 impl Evaluate for Expr<RollsExpr> {
-    type Output = Value;
+    type Output = Values;
 
     fn evaluate(&self) -> Result<Self::Output, ProgramError> {
         match self {
-            Expr::Dice(_, rolls) => rolls.evaluate(),
-            Expr::Constant(_, n) => Ok(*n),
+            Expr::Dice(_, rolls) => Ok(Values::from(rolls.evaluate()?)),
+            Expr::Constant(_, n) => Ok(Values::from(*n)),
+            // TODO: Actually tag values.
+            Expr::Annotations(_, e, annotations) => Ok(e.evaluate()?.annotate(annotations)),
             Expr::Binop(span, op, e1, e2) => {
                 let v1 = e1.evaluate()?;
                 let v2 = e2.evaluate()?;
-                op.apply(v1, v2).map_err(|source| ProgramError::Math {
-                    span: span.to_owned(),
-                    source,
-                })
+                v1.pointwise(&v2, |n1, n2| op.apply(n1, n2))
+                    .map_err(|source| ProgramError::Math {
+                        span: span.to_owned(),
+                        source,
+                    })
             }
         }
     }
@@ -154,6 +166,15 @@ impl<D: fmt::Debug + Eq + PrettyFormat + 'static> PrettyFormat for Expr<D> {
         match self {
             Expr::Dice(_, d) => d.pretty_format(writer),
             Expr::Constant(_, n) => write!(writer, "{n}"),
+            Expr::Annotations(_, e, annotations) if e.is_binop() => {
+                write!(writer, "(")?;
+                e.pretty_format(writer)?;
+                write!(writer, ") {}", annotations)
+            }
+            Expr::Annotations(_, e, annotations) => {
+                e.pretty_format(writer)?;
+                write!(writer, " {}", annotations)
+            }
             // Handle parentheses insertion. This code is expected to evolve
             // rapidly if we add more operators.
             Expr::Binop(_, op, e1, e2) if e2.is_binop() => {
@@ -215,10 +236,7 @@ impl PrettyFormat for DiceExpr {
     fn pretty_format(&self, writer: &mut dyn WriteColor) -> Result<(), io::Error> {
         match self {
             DiceExpr::Dice { count, die, .. } => {
-                if *count != 1 {
-                    write!(writer, "{count}")?;
-                }
-                write!(writer, "{die}")
+                write!(writer, "{count}{die}")
             }
         }
     }
@@ -237,20 +255,20 @@ pub enum RollsExpr {
 }
 
 impl Evaluate for RollsExpr {
-    type Output = Value;
+    type Output = Number;
 
     fn evaluate(&self) -> Result<Self::Output, ProgramError> {
         match self {
             RollsExpr::Rolls { expr, rolls, .. } => {
-                let mut sum: Value = 0;
+                let mut sum: Number = 0;
                 for roll in rolls {
                     let value = roll.face.value();
                     sum = sum.checked_add(value).ok_or(ProgramError::Math {
                         span: expr.span().to_owned(),
                         source: MathError::Overflow {
                             op: Binop::Add,
-                            v1: sum,
-                            v2: value,
+                            n1: sum,
+                            n2: value,
                         },
                     })?;
                 }
@@ -295,8 +313,11 @@ mod tests {
             ];
             leaf.prop_recursive(4, 32, 10, |inner| {
                 prop_oneof![
-                    (any::<Span>(), any::<Binop>(), inner.clone(), inner).prop_map(
+                    (any::<Span>(), any::<Binop>(), inner.clone(), inner.clone()).prop_map(
                         |(span, binop, e1, e2)| Self::Binop(span, binop, Rc::new(e1), Rc::new(e2))
+                    ),
+                    (any::<Span>(), inner, any::<Annotations>()).prop_map(
+                        |(span, e, annotations)| Self::Annotations(span, Rc::new(e), annotations)
                     ),
                 ]
             })

@@ -12,24 +12,22 @@ use rand::{Rng, RngCore};
 use crate::{
     errors::ProgramError,
     pretty::{ColorSpec, PrettyFormat, WriteColor},
+    values::Number,
 };
-
-/// A value that can appear on the faces of dice.
-pub type Value = i16;
 
 /// A die face. May have either a number, or some other symbol (but still with a
 /// numeric value).
 #[derive(Debug, Eq, PartialEq)]
 pub enum Face {
     /// A simple numeric face.
-    Numeric(Value),
+    Numeric(Number),
     /// A face with some other symbol, but still with a numeric value.
-    NamedNumeric(Cow<'static, str>, Value),
+    NamedNumeric(Cow<'static, str>, Number),
 }
 
 impl Face {
     /// Get the value of this face.
-    pub fn value(&self) -> Value {
+    pub fn value(&self) -> Number {
         match self {
             Face::Numeric(value) => *value,
             Face::NamedNumeric(_, value) => *value,
@@ -120,12 +118,12 @@ impl PrettyFormat for Roll {
 pub struct SimpleDie {
     /// The number of faces on this die.
     #[cfg_attr(test, proptest(strategy = "1..60i16"))]
-    faces: Value,
+    faces: Number,
 }
 
 impl SimpleDie {
     /// Create a new die with the specified number of faces.
-    pub fn new(faces: Value) -> Result<Rc<SimpleDie>, ProgramError> {
+    pub fn new(faces: Number) -> Result<Rc<SimpleDie>, ProgramError> {
         if faces > 0 {
             Ok(Rc::new(SimpleDie { faces }))
         } else {

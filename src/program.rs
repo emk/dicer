@@ -6,11 +6,13 @@ use codespan_reporting::files::SimpleFiles;
 use rand::RngCore;
 
 use crate::{
-    dice::{Die, FateDie, SimpleDie, Value},
+    annotations::{Annotation, Annotations},
+    dice::{Die, FateDie, SimpleDie},
     errors::{ProgramDiagnostics, ProgramError},
     expressions::{Binop, DiceExpr, Evaluate, Expr, RollAll, RollsExpr},
     pretty::{PrettyFormat, WriteColor},
     spans::{FileId, FileName, Files, Span},
+    values::{Number, Values},
 };
 
 /// A dice program, which can be executed to produce output.
@@ -57,7 +59,7 @@ impl Program<DiceExpr> {
 
 impl Program<RollsExpr> {
     /// Return the result of our program.
-    pub fn evaluate(&self) -> Result<Value, ProgramDiagnostics> {
+    pub fn evaluate(&self) -> Result<Values, ProgramDiagnostics> {
         self.expr
             .evaluate()
             .map_err(|err| ProgramDiagnostics::from_program_error(self.files.clone(), err))
@@ -97,6 +99,10 @@ peg::parser! {
                 Rc::new(Expr::Binop(e1.combined_span_for_parser(&e2), Binop::Sub, e1, e2))
             }
             --
+            e:@ _? annotations:annotations() r:position!() {
+                Rc::new(Expr::Annotations(Span::new(file_id, e.span().range.start..r), e, annotations))
+            }
+            --
             "(" _? e:expression(file_id) _? ")" { e }
             span_and_dice:spanned(file_id, <dice(file_id)>) {
                 let (span, dice) = span_and_dice;
@@ -112,6 +118,16 @@ peg::parser! {
         rule spanned<T>(file_id: FileId, expr: rule<T>) -> (Span, T)
             = l:position!() e:expr() r:position!() { (Span { file_id, range: l..r }, e) }
 
+        rule annotations() -> Annotations
+            = "[" _? annotations:(annotation() ++ (_? "," _?)) _? "]" {
+                Annotations::from_iter(annotations)
+            }
+
+        rule annotation() -> Annotation
+            = annotation:$(['_' | 'a'..='z'] ['_' | 'a'..='z' | '0'..='9']*) {
+                Annotation::new(annotation)
+            }
+
         rule dice(file_id: FileId) -> Rc<DiceExpr>
             = l:position!() die:die() r:position!() {
                 let span = Span { file_id, range: l..r };
@@ -125,11 +141,11 @@ peg::parser! {
         rule die() -> Rc<Die>
             = "dF" { Rc::new(Die::Fate(FateDie::new())) }
             / "d" faces:value() {?
-                    Ok(Rc::new(Die::Simple(SimpleDie::new(faces)
-                        .map_err(|_| "the number of faces on a die must be greater than 0")?)))
-                }
+                Ok(Rc::new(Die::Simple(SimpleDie::new(faces)
+                    .map_err(|_| "the number of faces on a die must be greater than 0")?)))
+            }
 
-        rule value() -> Value
+        rule value() -> Number
             = quiet! { n:$("-"? ['0'..='9']+) {? n.parse().or(Err(concat!("expected an integer no larger than ", stringify!(Value::MAX)))) } }
             / expected!("a number")
 
@@ -155,18 +171,29 @@ mod tests {
         let examples = &[
             // These tests can't be reordered without changing the rolls and
             // sums, because they share a seeded RNG.
-            ("d6", "d6 (5) = 5"),
-            ("d12", "d12 (10) = 10"),
-            ("d20", "d20 (19) = 19"),
-            ("dF", "dF (+) = 1"),
+            ("d6", "1d6 (5) = 5"),
+            ("d12", "1d12 (10) = 10"),
+            ("d20", "1d20 (19) = 19"),
+            ("dF", "1dF (+) = 1"),
             ("2d6", "2d6 (3 3) = 6"),
             ("2d6+3", "2d6 (4 6) + 3 = 13"),
             ("4dF", "4dF (0 0 + +) = 2"),
-            (" 1d6 + 1 ", "d6 (1) + 1 = 2"),
+            (" 1d6 + 1 ", "1d6 (1) + 1 = 2"),
             ("2d6 - 2", "2d6 (2 3) - 2 = 3"),
             ("-1", "-1 = -1"),                  // Found by proptest!
             ("0 + (0 + 0)", "0 + (0 + 0) = 0"), // Found by proptest!
             ("(0 + 0) + 0", "0 + 0 + 0 = 0"),   // No parens required.
+            // Level 5, 20 STR, longsword (flame tongue). Unlike Avrae, we
+            // include annotations in our actual calculations.
+            (
+                "(1d8 + 5) [piercing] + 2d6 [fire]",
+                "(1d8 (8) + 5) [piercing] + 2d6 (4 5) [fire] = 9 [fire] + 13 [piercing]",
+            ),
+            // Multiple annotations.
+            (
+                "1d8 [mark, piercing]",
+                "1d8 (5) [mark, piercing] = 5 [mark, piercing]",
+            ),
         ][..];
 
         let mut rng = ChaCha8Rng::seed_from_u64(28);
@@ -181,7 +208,7 @@ mod tests {
 
     #[test]
     fn errors_are_reported() {
-        let examples = vec![format!("{max} + {max}", max = Value::MAX)];
+        let examples = vec![format!("{max} + {max}", max = Number::MAX)];
 
         let mut rng = ChaCha8Rng::seed_from_u64(28);
         for source in examples {

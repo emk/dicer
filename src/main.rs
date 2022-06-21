@@ -12,6 +12,7 @@ use rand::prelude::ThreadRng;
 
 use crate::{program::Program, spans::FileName};
 
+mod annotations;
 mod dice;
 mod errors;
 mod expressions;
@@ -20,6 +21,7 @@ mod markdown_writer;
 mod pretty;
 mod program;
 mod spans;
+mod values;
 
 /// Roll dice!
 #[derive(Debug, Parser)]

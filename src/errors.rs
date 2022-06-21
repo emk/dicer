@@ -15,23 +15,23 @@ use log::error;
 use thiserror::Error;
 
 use crate::{
-    dice::Value,
     expressions::Binop,
     spans::{FileId, Files, Span},
+    values::Number,
 };
 
 /// An error occurred while doing math.
 #[derive(Debug, Error)]
 pub enum MathError {
     /// A `checked_*` instruction failed, typically with overflow.
-    #[error("arithmetic overflow in {v1} {op} {v2}")]
+    #[error("arithmetic overflow in {n1} {op} {n2}")]
     Overflow {
         /// The operator that failed.
         op: Binop,
         /// The left-hand value.
-        v1: Value,
+        n1: Number,
         /// The right-hand value.
-        v2: Value,
+        n2: Number,
     },
 }
 
@@ -44,7 +44,7 @@ pub enum ProgramError {
     #[error("a die must have at least one face, found: {faces}")]
     InvalidFaceCount {
         /// The number of faces specified for the die.
-        faces: Value,
+        faces: Number,
     },
 
     /// We had a problem doing I/O. We don't provide a lot of extra information,
