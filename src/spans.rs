@@ -10,11 +10,14 @@ pub type FileId = usize;
 /// A span in our source code, use to report where errors occurred.
 #[derive(Debug)]
 pub struct Span {
+    /// The file in which this span appears.
     pub file_id: FileId,
+    /// The range of bytes in the source code included in this span.
     pub range: Range<usize>,
 }
 
 impl Span {
+    /// Create a new [`Span`].
     pub fn new(file_id: FileId, range: Range<usize>) -> Self {
         Self { file_id, range }
     }

@@ -1,3 +1,7 @@
+//! A simple die-rolling utility.
+
+#![warn(missing_docs, clippy::missing_docs_in_private_items, clippy::all)]
+
 use std::{io::Write, process::exit};
 
 use clap::Parser;
@@ -33,6 +37,7 @@ struct Args {
     dice_exprs: Vec<String>,
 }
 
+/// Our main entry point. Wraps [`run`], and handles error reporting.
 fn main() {
     env_logger::init();
     let args = Args::parse();
@@ -45,6 +50,7 @@ fn main() {
     }
 }
 
+/// Does the actual work.
 fn run(args: &Args) -> Result<(), ProgramDiagnostics> {
     let mut rng = ThreadRng::default();
     let mut writer = StandardStream::stdout(args.color.into());

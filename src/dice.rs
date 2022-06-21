@@ -1,5 +1,8 @@
+//! Rollable dice.
+
 use std::{
     borrow::Cow,
+    cmp::Ordering,
     fmt::{self, Debug, Display},
     rc::Rc,
 };
@@ -11,15 +14,21 @@ use crate::{
     pretty::{ColorSpec, PrettyFormat, WriteColor},
 };
 
+/// A value that can appear on the faces of dice.
 pub type Value = i16;
 
+/// A die face. May have either a number, or some other symbol (but still with a
+/// numeric value).
 #[derive(Debug, Eq, PartialEq)]
 pub enum Face {
+    /// A simple numeric face.
     Numeric(Value),
+    /// A face with some other symbol, but still with a numeric value.
     NamedNumeric(Cow<'static, str>, Value),
 }
 
 impl Face {
+    /// Get the value of this face.
     pub fn value(&self) -> Value {
         match self {
             Face::Numeric(value) => *value,
@@ -72,14 +81,20 @@ impl RollDie for Die {
     }
 }
 
+/// A single roll of a [`Die`].
 #[derive(Debug, Eq, PartialEq)]
 pub struct Roll {
+    /// The die that was rolled.
     pub die: Rc<Die>,
+    /// The face showing.
     pub face: Face,
+    /// Whether we have discard this die from the final total (such as when
+    /// rolling with advantage or disadvantage, or rolling "4d6 drop lowest").
     pub discarded: bool,
 }
 
 impl Roll {
+    /// Create a new [`Roll`]. `face` must appear on `die`.
     pub fn new(die: Rc<Die>, face: Face) -> Roll {
         Roll {
             die,
@@ -99,14 +114,17 @@ impl PrettyFormat for Roll {
     }
 }
 
+/// A standard numeric die.
 #[derive(Debug, Eq, PartialEq)]
 #[cfg_attr(test, derive(proptest_derive::Arbitrary))]
 pub struct SimpleDie {
+    /// The number of faces on this die.
     #[cfg_attr(test, proptest(strategy = "1..60i16"))]
     faces: Value,
 }
 
 impl SimpleDie {
+    /// Create a new die with the specified number of faces.
     pub fn new(faces: Value) -> Result<Rc<SimpleDie>, ProgramError> {
         if faces > 0 {
             Ok(Rc::new(SimpleDie { faces }))
@@ -129,11 +147,13 @@ impl RollDie for SimpleDie {
     }
 }
 
+/// A specialized "Fate" die, with "-", "0" and "+" faces.
 #[derive(Debug, Eq, PartialEq)]
 #[cfg_attr(test, derive(proptest_derive::Arbitrary))]
 pub struct FateDie {}
 
 impl FateDie {
+    /// Create a new Fate die.
     pub fn new() -> Rc<FateDie> {
         Rc::new(FateDie {})
     }
@@ -148,12 +168,10 @@ impl Display for FateDie {
 impl RollDie for FateDie {
     fn roll_die(self: &Rc<Self>, rng: &mut dyn RngCore) -> Rc<Roll> {
         let value = rng.gen_range(-1..=1);
-        let label = if value < 0 {
-            "-"
-        } else if value > 0 {
-            "+"
-        } else {
-            "0"
+        let label = match value.cmp(&0) {
+            Ordering::Less => "-",
+            Ordering::Equal => "0",
+            Ordering::Greater => "+",
         };
         let face = Face::NamedNumeric(Cow::Borrowed(label), value);
         Rc::new(Roll::new(Rc::new(Die::Fate(self.clone())), face))
@@ -180,9 +198,9 @@ pub mod tests {
     proptest! {
         #[test]
         fn dice_and_rolls_have_names(mut rng in rng(), die in any::<Rc<Die>>()) {
-            assert!(die.to_string().len() > 0);
+            assert!(!die.to_string().is_empty());
             let roll = die.roll_die(&mut rng);
-            assert!(roll.face.to_string().len() > 0);
+            assert!(!roll.face.to_string().is_empty());
         }
 
         #[test]

@@ -60,6 +60,7 @@ impl<W: Write> MarkdownWriter<W> {
         style: MarkdownTextStyle,
         active: bool,
     ) -> io::Result<()> {
+        #[allow(clippy::collapsible_else_if)]
         if active {
             if !self.style_stack.contains(&style) {
                 self.style_stack.push(style);

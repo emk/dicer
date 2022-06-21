@@ -23,8 +23,16 @@ use crate::{
 /// An error occurred while doing math.
 #[derive(Debug, Error)]
 pub enum MathError {
+    /// A `checked_*` instruction failed, typically with overflow.
     #[error("arithmetic overflow in {v1} {op} {v2}")]
-    Overflow { op: Binop, v1: Value, v2: Value },
+    Overflow {
+        /// The operator that failed.
+        op: Binop,
+        /// The left-hand value.
+        v1: Value,
+        /// The right-hand value.
+        v2: Value,
+    },
 }
 
 /// An error occurred while parsing or executing a dice-related "program". This
@@ -34,7 +42,10 @@ pub enum MathError {
 pub enum ProgramError {
     /// We found a die with the wrong number of faces.
     #[error("a die must have at least one face, found: {faces}")]
-    InvalidFaceCount { faces: Value },
+    InvalidFaceCount {
+        /// The number of faces specified for the die.
+        faces: Value,
+    },
 
     /// We had a problem doing I/O. We don't provide a lot of extra information,
     /// because our language doesn't really do I/O. So this mostly applies to
@@ -44,11 +55,19 @@ pub enum ProgramError {
 
     /// An error occurred while performing basic math.
     #[error("math error: {source}")]
-    Math { source: MathError },
+    Math {
+        /// Our wrapped [`MathError`].
+        source: MathError,
+    },
 
     /// We encountered an error parsing.
     #[error("{span}: {message}")]
-    Parse { span: Span, message: String },
+    Parse {
+        /// The source location where the error occurred.
+        span: Span,
+        /// The parser error message.
+        message: String,
+    },
 }
 
 impl ProgramError {
@@ -102,6 +121,8 @@ pub struct ProgramDiagnostics {
 }
 
 impl ProgramDiagnostics {
+    /// Convert a [`ProgramError`] to [`ProgramDiagnostics`]. This requires
+    /// providing access to the source code for use in error messages.
     pub fn from_program_error(files: Files, err: ProgramError) -> Self {
         Self {
             files,

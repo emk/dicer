@@ -16,7 +16,9 @@ use crate::{
 /// A dice program, which can be executed to produce output.
 #[derive(Debug)]
 pub struct Program<D: fmt::Debug + Eq + 'static> {
+    /// Source code for this program, for use in error reporting.
     files: Files,
+    /// The `Expr` making up this program.
     expr: Rc<Expr<D>>,
 }
 
@@ -33,7 +35,7 @@ impl Program<DiceExpr> {
             Err(err) => {
                 let offset = err.location.offset;
                 Err(ProgramDiagnostics::from_program_error(
-                    files.clone(),
+                    files,
                     ProgramError::Parse {
                         span: Span::new(file_id, offset..offset),
                         message: format!("expected {}", err.expected),

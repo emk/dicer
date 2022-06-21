@@ -1,3 +1,5 @@
+//! Abstract syntax trees
+
 use std::{fmt, io, rc::Rc};
 
 use rand::RngCore;
@@ -41,14 +43,12 @@ impl Binop {
     /// Apply this binary operator to two values.
     pub fn apply(self, v1: Value, v2: Value) -> Result<Value, MathError> {
         match self {
-            Binop::Add => {
-                v1.checked_add(v2)
-                    .ok_or_else(|| MathError::Overflow { op: self, v1, v2 })
-            }
-            Binop::Sub => {
-                v1.checked_sub(v2)
-                    .ok_or_else(|| MathError::Overflow { op: self, v1, v2 })
-            }
+            Binop::Add => v1
+                .checked_add(v2)
+                .ok_or(MathError::Overflow { op: self, v1, v2 }),
+            Binop::Sub => v1
+                .checked_sub(v2)
+                .ok_or(MathError::Overflow { op: self, v1, v2 }),
         }
     }
 }
@@ -63,6 +63,11 @@ impl fmt::Display for Binop {
 }
 
 /// Expressions, including constants and math.
+///
+/// These typically appear in two forms:
+///
+/// - [`Expr<DiceExpr>`]: Parsed source code.
+/// - [`Expr<RollsExpr>`]: Paresed source code with die rolls attached.
 #[derive(Debug, Eq, PartialEq)]
 pub enum Expr<D: fmt::Debug + Eq + 'static> {
     /// An expression involving dice. The contents vary depending on whether the
@@ -141,7 +146,12 @@ impl<D: fmt::Debug + Eq + PrettyFormat + 'static> PrettyFormat for Expr<D> {
 #[derive(Debug, Eq, PartialEq)]
 pub enum DiceExpr {
     /// XdY expressions.
-    Dice { count: u64, die: Rc<Die> },
+    Dice {
+        /// The number of dice to roll.
+        count: u64,
+        /// The type of dice to roll.
+        die: Rc<Die>,
+    },
 }
 
 impl RollAll for DiceExpr {
@@ -194,7 +204,7 @@ impl Evaluate for RollsExpr {
                 let mut sum: Value = 0;
                 for roll in rolls {
                     let value = roll.face.value();
-                    sum = sum.checked_add(value).ok_or_else(|| ProgramError::Math {
+                    sum = sum.checked_add(value).ok_or(ProgramError::Math {
                         source: MathError::Overflow {
                             op: Binop::Add,
                             v1: sum,
@@ -268,7 +278,7 @@ mod tests {
 
         fn arbitrary_with(_: Self::Parameters) -> Self::Strategy {
             (any::<Rc<DiceExpr>>(), rng())
-                .prop_map(|(expr, mut rng)| expr.to_owned().roll_all(&mut rng))
+                .prop_map(|(expr, mut rng)| expr.roll_all(&mut rng))
                 .boxed()
         }
 
