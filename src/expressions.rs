@@ -28,7 +28,7 @@ pub trait Evaluate {
 }
 
 /// Binary operations.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[cfg_attr(test, derive(proptest_derive::Arbitrary))]
 pub enum Binop {
     /// Addition.
@@ -63,8 +63,8 @@ impl fmt::Display for Binop {
 }
 
 /// Expressions, including constants and math.
-#[derive(Debug)]
-pub enum Expr<D: fmt::Debug + 'static> {
+#[derive(Debug, Eq, PartialEq)]
+pub enum Expr<D: fmt::Debug + Eq + 'static> {
     /// An expression involving dice. The contents vary depending on whether the
     /// dice have been rolled.
     Dice(Rc<D>),
@@ -72,6 +72,13 @@ pub enum Expr<D: fmt::Debug + 'static> {
     Constant(Value),
     /// A binary operator.
     Binop(Binop, Rc<Self>, Rc<Self>),
+}
+
+impl<D: fmt::Debug + Eq + 'static> Expr<D> {
+    /// Is this a binop? Used for inserting parens when printing.
+    fn is_binop(&self) -> bool {
+        matches!(self, Expr::Binop(_, _, _))
+    }
 }
 
 impl RollAll for Expr<DiceExpr> {
@@ -107,11 +114,19 @@ impl Evaluate for Expr<RollsExpr> {
     }
 }
 
-impl<D: fmt::Debug + PrettyFormat + 'static> PrettyFormat for Expr<D> {
+impl<D: fmt::Debug + Eq + PrettyFormat + 'static> PrettyFormat for Expr<D> {
     fn pretty_format(&self, writer: &mut dyn WriteColor) -> Result<(), io::Error> {
         match self {
             Expr::Dice(d) => d.pretty_format(writer),
             Expr::Constant(n) => write!(writer, "{n}"),
+            // Handle parentheses insertion. This code is expected to evolve
+            // rapidly if we add more operators.
+            Expr::Binop(op, e1, e2) if e2.is_binop() => {
+                e1.pretty_format(writer)?;
+                write!(writer, " {} (", op)?;
+                e2.pretty_format(writer)?;
+                write!(writer, ")")
+            }
             Expr::Binop(op, e1, e2) => {
                 e1.pretty_format(writer)?;
                 write!(writer, " {} ", op)?;
@@ -128,6 +143,26 @@ pub enum DiceExpr {
     /// XdY expressions.
     Dice { count: u64, die: Rc<dyn Die> },
 }
+
+impl PartialEq for DiceExpr {
+    fn eq(&self, other: &Self) -> bool {
+        // We have to do this manually because `dyn Die` can't be compared.
+        match (self, other) {
+            (
+                Self::Dice {
+                    count: l_count,
+                    die: l_die,
+                },
+                Self::Dice {
+                    count: r_count,
+                    die: r_die,
+                },
+            ) => l_count == r_count && l_die.eq(&**r_die),
+        }
+    }
+}
+
+impl Eq for DiceExpr {}
 
 impl RollAll for DiceExpr {
     type Output = RollsExpr;
@@ -159,7 +194,7 @@ impl PrettyFormat for DiceExpr {
 }
 
 /// A [`DiceExpr`] plus the [`Roll`]s it produced.
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub enum RollsExpr {
     /// A number of rolls of similar dice.
     Rolls {
@@ -218,7 +253,7 @@ mod tests {
     use super::*;
     use crate::dice::tests::{any_die, rng};
 
-    impl<D: fmt::Debug + Arbitrary> Arbitrary for Expr<D> {
+    impl<D: fmt::Debug + Eq + Arbitrary> Arbitrary for Expr<D> {
         type Parameters = ();
 
         fn arbitrary_with(_: Self::Parameters) -> Self::Strategy {

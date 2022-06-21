@@ -12,9 +12,10 @@ use crate::{
     pretty::{PrettyFormat, WriteColor},
     spans::{FileName, Files, Span},
 };
+
 /// A dice program, which can be executed to produce output.
 #[derive(Debug)]
-pub struct Program<D: fmt::Debug + 'static> {
+pub struct Program<D: fmt::Debug + Eq + 'static> {
     files: Files,
     expr: Rc<Expr<D>>,
 }
@@ -73,7 +74,7 @@ impl Program<RollsExpr> {
     }
 }
 
-impl<D: fmt::Debug + PrettyFormat + 'static> PrettyFormat for Program<D> {
+impl<D: fmt::Debug + Eq + PrettyFormat + 'static> PrettyFormat for Program<D> {
     fn pretty_format(&self, writer: &mut dyn WriteColor) -> Result<(), io::Error> {
         self.expr.pretty_format(writer)
     }
@@ -89,6 +90,7 @@ peg::parser! {
             e1:(@) _? "+" _? e2:@ { Rc::new(Expr::Binop(Binop::Add, e1, e2)) }
             e1:(@) _? "-" _? e2:@ { Rc::new(Expr::Binop(Binop::Sub, e1, e2)) }
             --
+            "(" _? e:expression() _? ")" { e }
             dice:dice() { Rc::new(Expr::Dice(dice)) }
             value:value() { Rc::new(Expr::Constant(value)) }
         }
@@ -102,7 +104,7 @@ peg::parser! {
             / "d" faces:value() {? SimpleDie::new(faces).map_err(|_| "the number of faces on a die must be greater than 0") }
 
         rule value() -> Value
-            = quiet! { n:$(['0'..='9']+) {? n.parse().or(Err(concat!("expected an integer no larger than ", stringify!(Value::MAX)))) } }
+            = quiet! { n:$("-"? ['0'..='9']+) {? n.parse().or(Err(concat!("expected an integer no larger than ", stringify!(Value::MAX)))) } }
             / expected!("a number")
 
         rule count() -> u64
@@ -115,6 +117,7 @@ peg::parser! {
 
 #[cfg(test)]
 mod tests {
+    use proptest::prelude::*;
     use rand::SeedableRng;
     use rand_chacha::ChaCha8Rng;
 
@@ -135,6 +138,9 @@ mod tests {
             ("4dF", "4dF (0 0 + +) = 2"),
             (" 1d6 + 1 ", "d6 (1) + 1 = 2"),
             ("2d6 - 2", "2d6 (2 3) - 2 = 3"),
+            ("-1", "-1 = -1"),                  // Found by proptest!
+            ("0 + (0 + 0)", "0 + (0 + 0) = 0"), // Found by proptest!
+            ("(0 + 0) + 0", "0 + 0 + 0 = 0"),   // No parens required.
         ][..];
 
         let mut rng = ChaCha8Rng::seed_from_u64(28);
@@ -145,6 +151,20 @@ mod tests {
             let mut wtr = MarkdownWriter::new(vec![]);
             rolled.evaluate_and_pretty_format(&mut wtr).unwrap();
             assert_eq!(wtr.into_string_lossy(), expected);
+        }
+    }
+
+    proptest! {
+        /// This is a very powerful test case which makes sure that our parser
+        /// and our formatter work together well. It has generated several test
+        /// cases for `programs_print_expected_results`.
+        #[test]
+        fn formatting_and_parsing_returns_original_expression(expr in any::<Rc<Expr<DiceExpr>>>()) {
+            let mut wtr = MarkdownWriter::new(vec![]);
+            expr.pretty_format(&mut wtr).unwrap();
+            let src = wtr.into_string_lossy();
+            let parsed = Program::parse(FileName::Arg(1), &src).unwrap();
+            assert_eq!(parsed.expr, expr);
         }
     }
 }

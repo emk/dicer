@@ -1,4 +1,5 @@
 use std::{
+    any::Any,
     borrow::Cow,
     fmt::{self, Debug, Display},
     rc::Rc,
@@ -13,7 +14,7 @@ use crate::{
 
 pub type Value = i16;
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub enum Face {
     Numeric(Value),
     NamedNumeric(Cow<'static, str>, Value),
@@ -37,7 +38,20 @@ impl Display for Face {
     }
 }
 
+/// Interface shared by all dice.
+///
+/// We implement this as a trait to allow arbitrary extension with new types of
+/// dice.
 pub trait Die: Display + Debug + 'static {
+    /// Return an implementation of Rust's [`Any`] interface, which can be use
+    /// to indentify the concrete type of a [`Die`] at runtime.
+    fn as_any(&self) -> &dyn Any;
+
+    /// Custom comparison function, allowing comparison of `dyn Die` values. For
+    /// background, see [this discussion](https://stackoverflow.com/a/25359060).
+    fn eq(&self, other: &dyn Die) -> bool;
+
+    /// Roll this die once.
     fn roll(self: Rc<Self>, rng: &mut dyn RngCore) -> Rc<Roll>;
 }
 
@@ -58,6 +72,14 @@ impl Roll {
     }
 }
 
+impl PartialEq for Roll {
+    fn eq(&self, other: &Self) -> bool {
+        self.die.eq(&*other.die) && self.face == other.face && self.discarded == other.discarded
+    }
+}
+
+impl Eq for Roll {}
+
 impl PrettyFormat for Roll {
     fn pretty_format(&self, writer: &mut dyn WriteColor) -> Result<(), std::io::Error> {
         if self.discarded {
@@ -68,7 +90,7 @@ impl PrettyFormat for Roll {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 #[cfg_attr(test, derive(proptest_derive::Arbitrary))]
 pub struct SimpleDie {
     #[cfg_attr(test, proptest(strategy = "1..60i16"))]
@@ -92,13 +114,25 @@ impl Display for SimpleDie {
 }
 
 impl Die for SimpleDie {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn eq(&self, other: &dyn Die) -> bool {
+        if let Some(other) = other.as_any().downcast_ref::<Self>() {
+            self == other
+        } else {
+            false
+        }
+    }
+
     fn roll(self: Rc<Self>, rng: &mut dyn RngCore) -> Rc<Roll> {
         let face = Face::Numeric(rng.gen_range(1..=self.faces));
         Rc::new(Roll::new(self.clone(), face))
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 #[cfg_attr(test, derive(proptest_derive::Arbitrary))]
 pub struct FateDie {}
 
@@ -115,6 +149,18 @@ impl Display for FateDie {
 }
 
 impl Die for FateDie {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn eq(&self, other: &dyn Die) -> bool {
+        if let Some(other) = other.as_any().downcast_ref::<Self>() {
+            self == other
+        } else {
+            false
+        }
+    }
+
     fn roll(self: Rc<Self>, rng: &mut dyn RngCore) -> Rc<Roll> {
         let value = rng.gen_range(-1..=1);
         let label = if value < 0 {

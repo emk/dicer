@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 3f8f16635b310ba50b7401189cd07f931c21a1bbf6d5070a70df94b2e2b9eda9 # shrinks to expr = Constant(-1)
+cc febfd5a539e3bbc75caac896213b0d6c12bc7699e71afb5d90e9db405b6ad671 # shrinks to expr = Binop(Add, Constant(0), Binop(Add, Constant(0), Constant(0)))
