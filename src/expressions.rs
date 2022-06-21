@@ -31,8 +31,10 @@ pub trait Evaluate {
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(test, derive(proptest_derive::Arbitrary))]
 pub enum Binop {
-    /// Simple addition.
+    /// Addition.
     Add,
+    /// Subtraction.
+    Sub,
 }
 
 impl Binop {
@@ -43,6 +45,10 @@ impl Binop {
                 v1.checked_add(v2)
                     .ok_or_else(|| MathError::Overflow { op: self, v1, v2 })
             }
+            Binop::Sub => {
+                v1.checked_sub(v2)
+                    .ok_or_else(|| MathError::Overflow { op: self, v1, v2 })
+            }
         }
     }
 }
@@ -51,6 +57,7 @@ impl fmt::Display for Binop {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
             Binop::Add => write!(f, "+"),
+            Binop::Sub => write!(f, "-"),
         }
     }
 }

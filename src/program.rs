@@ -87,6 +87,7 @@ peg::parser! {
 
         rule expression() -> Rc<Expr<DiceExpr>> = precedence!{
             e1:(@) _? "+" _? e2:@ { Rc::new(Expr::Binop(Binop::Add, e1, e2)) }
+            e1:(@) _? "-" _? e2:@ { Rc::new(Expr::Binop(Binop::Sub, e1, e2)) }
             --
             dice:dice() { Rc::new(Expr::Dice(dice)) }
             value:value() { Rc::new(Expr::Constant(value)) }
@@ -133,6 +134,7 @@ mod tests {
             ("2d6+3", "2d6 (4 6) + 3 = 13"),
             ("4dF", "4dF (0 0 + +) = 2"),
             (" 1d6 + 1 ", "d6 (1) + 1 = 2"),
+            ("2d6 - 2", "2d6 (2 3) - 2 = 3"),
         ][..];
 
         let mut rng = ChaCha8Rng::seed_from_u64(28);
